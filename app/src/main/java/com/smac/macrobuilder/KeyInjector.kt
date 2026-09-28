@@ -29,10 +29,19 @@ object KeyInjector {
         }
     }
 
-    fun ready(): Boolean = try {
-        Shizuku.pingBinder() && Shizuku.checkSelfPermission() == PackageManager.PERMISSION_GRANTED
-    } catch (e: Throwable) {
-        false
+    private var readyAt = 0L
+    private var readyValue = false
+
+    fun ready(): Boolean {
+        val now = SystemClock.uptimeMillis()
+        if (now - readyAt < 1000) return readyValue
+        readyValue = try {
+            Shizuku.pingBinder() && Shizuku.checkSelfPermission() == PackageManager.PERMISSION_GRANTED
+        } catch (e: Throwable) {
+            false
+        }
+        readyAt = now
+        return readyValue
     }
 
     private fun bind(): Boolean {
