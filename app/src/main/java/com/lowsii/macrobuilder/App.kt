@@ -1,4 +1,4 @@
-package com.lowsii.macrobuilder
+package com.smac.macrobuilder
 
 import android.app.Application
 import com.google.android.material.color.DynamicColors
