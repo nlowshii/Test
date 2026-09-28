@@ -44,6 +44,7 @@ class MainActivity : AppCompatActivity() {
     private var loading = false
     private var lang = "en"
     private var tab = 1
+    private var lastStored = ""
 
     private lateinit var kb: Editor
     private lateinit var fl: Editor
@@ -86,14 +87,13 @@ class MainActivity : AppCompatActivity() {
     private fun newMacro() =
         Macro("Macro ${cfg.macros.size + 1}", "", false, 1, false, mutableListOf())
 
-    private fun newFloat() = Macro(
-        "Button ${cfg.floats.size + 1}", "", false, 1, false,
-        mutableListOf(newAction()), id = MacroStore.newId()
+    private fun newTouch() = Macro(
+        "Touch ${cfg.floats.size + 1}", "", false, 1, false, mutableListOf(),
+        id = MacroStore.newId(), label = "T${cfg.floats.size + 1}", kind = "touch"
     )
 
     private fun ensureDefaults() {
         if (cfg.macros.isEmpty()) cfg.macros.add(newMacro())
-        if (cfg.floats.isEmpty()) cfg.floats.add(newFloat())
     }
 
     private fun btn(text: String, outlined: Boolean = false, onClick: () -> Unit): MaterialButton {
@@ -165,7 +165,7 @@ class MainActivity : AppCompatActivity() {
         }
         val label = TextView(this)
         val start = (initial.coerceIn(from, to) - from) / step * step + from
-        label.text = "$title: $start $unit"
+        label.text = "$title: $start $unit".trim()
         val slider = Slider(this).apply {
             valueFrom = from.toFloat()
             valueTo = to.toFloat()
@@ -173,7 +173,7 @@ class MainActivity : AppCompatActivity() {
             this.value = start.toFloat()
             addOnChangeListener { _, v, _ ->
                 onChange(v.toInt())
-                label.text = "$title: ${v.toInt()} $unit"
+                label.text = "$title: ${v.toInt()} $unit".trim()
             }
         }
         box.addView(label)
@@ -191,6 +191,7 @@ class MainActivity : AppCompatActivity() {
         }
         draft = null
         ensureDefaults()
+        lastStored = MacroStore.raw(this)
         tab = savedInstanceState?.getInt("tab", 1) ?: 1
 
         val content = LinearLayout(this).apply {
@@ -203,7 +204,7 @@ class MainActivity : AppCompatActivity() {
             gravity = Gravity.CENTER_VERTICAL
         }
         header.addView(TextView(this).apply {
-            text = "Simple Macro"
+            text = getString(R.string.app_name)
             setTextAppearance(MR.style.TextAppearance_Material3_HeadlineSmall)
         }, LinearLayout.LayoutParams(0, wrap, 1f))
         header.addView(MaterialButton(this, null, MR.attr.materialIconButtonStyle).apply {
@@ -291,6 +292,7 @@ class MainActivity : AppCompatActivity() {
 
     override fun onResume() {
         super.onResume()
+        syncFromStore()
         handler.post(tick)
     }
 
@@ -304,6 +306,20 @@ class MainActivity : AppCompatActivity() {
         super.onDestroy()
     }
 
+    private fun syncFromStore() {
+        val now = MacroStore.raw(this)
+        if (now == lastStored) return
+        lastStored = now
+        try {
+            val stored = MacroStore.parse(now)
+            cfg.floats.removeAll { it.kind == "touch" }
+            cfg.floats.addAll(stored.floats.filter { it.kind == "touch" })
+            cfg.floatEnabled = stored.floatEnabled
+            fl.refresh()
+        } catch (e: Exception) {
+        }
+    }
+
     private fun showTab(id: Int) {
         tab = id
         kb.pane.visibility = if (id == 1) View.VISIBLE else View.GONE
@@ -314,8 +330,8 @@ class MainActivity : AppCompatActivity() {
         val (c, box) = card()
         box.addView(TextView(this).apply {
             text = t(
-                "1) Enable the accessibility service.\n2) Key and mouse actions need Shizuku running and granted.\n3) Set up a macro and Save.\n4) Open the target app, then press the hotkey or tap a floating button.",
-                "1) Aktifkan layanan aksesibilitas.\n2) Aksi tombol dan mouse membutuhkan Shizuku yang berjalan dan diizinkan.\n3) Atur macro lalu Simpan.\n4) Buka aplikasi target, lalu tekan hotkey atau ketuk tombol melayang."
+                "1) Enable the accessibility service.\n2) Touch buttons only need the accessibility service. Key and mouse actions also need Shizuku.\n3) Set up a macro and Save.\n4) Open the target app: press a hotkey, or use the mod menu to add floating touch buttons.",
+                "1) Aktifkan layanan aksesibilitas.\n2) Tombol sentuh hanya butuh layanan aksesibilitas. Aksi tombol dan mouse juga butuh Shizuku.\n3) Atur macro lalu Simpan.\n4) Buka aplikasi target: tekan hotkey, atau pakai mod menu untuk menambah tombol sentuh melayang."
             )
         })
         box.addView(btn(t("Open accessibility settings", "Buka pengaturan aksesibilitas"), true) {
@@ -465,7 +481,9 @@ class MainActivity : AppCompatActivity() {
             trig.toSet().size != trig.size ->
                 toast(t("Two macros share the same hotkey", "Ada hotkey yang sama antar macro"))
             else -> {
-                MacroStore.save(this, MacroStore.toJson(cfg))
+                val json = MacroStore.toJson(cfg)
+                MacroStore.save(this, json)
+                lastStored = json
                 toast(t("Saved", "Tersimpan"))
             }
         }
@@ -474,16 +492,26 @@ class MainActivity : AppCompatActivity() {
     private inner class Editor(val floating: Boolean) {
         var cur = 0
         val pane = LinearLayout(this@MainActivity).apply { orientation = LinearLayout.VERTICAL }
-        private val limit = 5
+        private val limit = if (floating) 8 else 5
+        private val kindItems = listOf(
+            t("Macro button (key / touch actions)", "Tombol macro (aksi tombol / sentuh)"),
+            t("Touch button (points at a screen control)", "Tombol sentuh (menunjuk kontrol layar)")
+        )
 
         private lateinit var floatSw: MaterialSwitch
+        private lateinit var menuSw: MaterialSwitch
         private lateinit var macroAc: MaterialAutoCompleteTextView
+        private lateinit var emptyText: TextView
+        private lateinit var body: LinearLayout
         private lateinit var nameEt: TextInputEditText
+        private lateinit var typeAc: MaterialAutoCompleteTextView
         private lateinit var labelEt: TextInputEditText
         private lateinit var hotkeyBtn: MaterialButton
         private lateinit var toggleSw: MaterialSwitch
         private lateinit var togetherSw: MaterialSwitch
         private lateinit var repeatEt: TextInputEditText
+        private lateinit var macroBox: LinearLayout
+        private lateinit var touchBox: LinearLayout
         private lateinit var actionsBox: LinearLayout
         private lateinit var addBtn: MaterialButton
         private lateinit var appearanceBox: LinearLayout
@@ -503,11 +531,17 @@ class MainActivity : AppCompatActivity() {
                     layoutParams = lp(12)
                     setOnCheckedChangeListener { _, checked -> if (!loading) cfg.floatEnabled = checked }
                 }
+                menuSw = MaterialSwitch(ctx).apply {
+                    text = t("Show mod menu in the target app", "Tampilkan mod menu di aplikasi target")
+                    layoutParams = lp(4)
+                    setOnCheckedChangeListener { _, checked -> if (!loading) cfg.menuEnabled = checked }
+                }
                 pane.addView(floatSw)
+                pane.addView(menuSw)
                 pane.addView(TextView(ctx).apply {
                     text = t(
-                        "Tap a button to run its macro, drag it to move it. Buttons update after you Save.",
-                        "Ketuk tombol untuk menjalankan macro, seret untuk memindahkan. Tombol diperbarui setelah Simpan."
+                        "Open the target app and tap the menu handle to add touch buttons. Drag each ring onto a game control, then turn Edit layout off. Buttons update after you Save.",
+                        "Buka aplikasi target dan ketuk gagang menu untuk menambah tombol sentuh. Seret tiap cincin ke kontrol game, lalu matikan Edit layout. Tombol diperbarui setelah Simpan."
                     )
                     setPadding(dp(4), dp(4), dp(4), 0)
                 })
@@ -528,35 +562,58 @@ class MainActivity : AppCompatActivity() {
                 if (list.size >= limit) {
                     toast(t("Maximum $limit", "Maksimal $limit"))
                 } else {
-                    list.add(if (floating) newFloat() else newMacro())
+                    list.add(if (floating) newTouch() else newMacro())
                     cur = list.size - 1
                     refresh()
                 }
             }, LinearLayout.LayoutParams(wrap, wrap).apply { marginStart = dp(8) })
             macroRow.addView(btn(t("Delete", "Hapus"), true) {
-                if (list.size <= 1) {
+                val min = if (floating) 1 else 2
+                if (list.size < min) {
                     toast(t("At least 1 is required", "Minimal 1"))
                 } else {
                     list.removeAt(cur)
-                    cur = minOf(cur, list.size - 1)
+                    cur = minOf(cur, list.size - 1).coerceAtLeast(0)
                     refresh()
                 }
             }, LinearLayout.LayoutParams(wrap, wrap).apply { marginStart = dp(8) })
             pane.addView(macroRow)
 
+            emptyText = TextView(ctx).apply {
+                text = t(
+                    "No buttons yet. Add one with + or from the mod menu in the game.",
+                    "Belum ada tombol. Tambahkan dengan + atau dari mod menu di dalam game."
+                )
+                setPadding(dp(4), dp(12), dp(4), 0)
+                visibility = View.GONE
+            }
+            pane.addView(emptyText)
+
+            body = LinearLayout(ctx).apply { orientation = LinearLayout.VERTICAL }
+            pane.addView(body)
+
             val (nameTil, name) = field(if (floating) t("Button name", "Nama tombol") else t("Macro name", "Nama macro")) {
                 macro.name = it
             }
             nameEt = name
-            pane.addView(nameTil)
+            body.addView(nameTil)
 
             if (floating) {
+                val (typeTil, tac) = dropdown(t("Button type", "Jenis tombol"))
+                typeAc = tac
+                typeAc.setSimpleItems(kindItems.toTypedArray())
+                typeAc.setOnItemClickListener { _, _, pos, _ ->
+                    macro.kind = if (pos == 1) "touch" else "macro"
+                    applyKind()
+                }
+                body.addView(typeTil)
+
                 val (labelTil, lb) = field(t("Label (shown on the button)", "Label (tampil di tombol)")) {
                     macro.label = it
                     updatePreview()
                 }
                 labelEt = lb
-                pane.addView(labelTil)
+                body.addView(labelTil)
 
                 previewBox = FrameLayout(ctx).apply {
                     background = GradientDrawable().apply {
@@ -564,9 +621,11 @@ class MainActivity : AppCompatActivity() {
                         cornerRadius = dp(16).toFloat()
                     }
                 }
-                pane.addView(previewBox, LinearLayout.LayoutParams(match, dp(176)).apply { topMargin = dp(8) })
+                body.addView(previewBox, LinearLayout.LayoutParams(match, dp(176)).apply { topMargin = dp(8) })
                 appearanceBox = LinearLayout(ctx).apply { orientation = LinearLayout.VERTICAL }
-                pane.addView(appearanceBox)
+                body.addView(appearanceBox)
+                touchBox = LinearLayout(ctx).apply { orientation = LinearLayout.VERTICAL }
+                body.addView(touchBox)
             } else {
                 hotkeyBtn = btn("") {
                     capture(
@@ -579,8 +638,11 @@ class MainActivity : AppCompatActivity() {
                         }
                     )
                 }
-                pane.addView(hotkeyBtn)
+                body.addView(hotkeyBtn)
             }
+
+            macroBox = LinearLayout(ctx).apply { orientation = LinearLayout.VERTICAL }
+            body.addView(macroBox)
 
             toggleSw = MaterialSwitch(ctx).apply {
                 text = if (floating) t("Toggle (tap to start, tap again to stop)", "Toggle (ketuk untuk mulai, ketuk lagi untuk berhenti)")
@@ -588,28 +650,28 @@ class MainActivity : AppCompatActivity() {
                 layoutParams = lp(8)
                 setOnCheckedChangeListener { _, checked -> if (!loading) macro.toggle = checked }
             }
-            pane.addView(toggleSw)
+            macroBox.addView(toggleSw)
 
             togetherSw = MaterialSwitch(ctx).apply {
                 text = t("Press key actions together", "Tekan aksi tombol bersamaan")
                 layoutParams = lp(4)
                 setOnCheckedChangeListener { _, checked -> if (!loading) macro.together = checked }
             }
-            pane.addView(togetherSw)
+            macroBox.addView(togetherSw)
 
             val (repeatTil, rep) = field(
                 t("Repeat (0 = endless, toggle only)", "Ulangi (0 = tanpa henti, hanya toggle)"), true
             ) { macro.repeat = it.toIntOrNull() ?: 1 }
             repeatEt = rep
-            pane.addView(repeatTil)
+            macroBox.addView(repeatTil)
 
-            pane.addView(TextView(ctx).apply {
-                text = t("Actions (max 10). Slider left = faster.", "Aksi (maks 10). Slider ke kiri = lebih cepat.")
+            macroBox.addView(TextView(ctx).apply {
+                text = t("Actions (max 10)", "Aksi (maks 10)")
                 setTextAppearance(MR.style.TextAppearance_Material3_TitleMedium)
                 setPadding(0, dp(20), 0, 0)
             })
             actionsBox = LinearLayout(ctx).apply { orientation = LinearLayout.VERTICAL }
-            pane.addView(actionsBox)
+            macroBox.addView(actionsBox)
 
             addBtn = btn("") {
                 if (macro.actions.size < 10) {
@@ -617,18 +679,33 @@ class MainActivity : AppCompatActivity() {
                     rebuildActions()
                 }
             }
-            pane.addView(addBtn)
+            macroBox.addView(addBtn)
         }
 
         fun refresh() {
-            cur = cur.coerceIn(0, list.size - 1)
+            cur = if (list.isEmpty()) 0 else cur.coerceIn(0, list.size - 1)
             loading = true
-            if (floating) floatSw.isChecked = cfg.floatEnabled
+            if (floating) {
+                floatSw.isChecked = cfg.floatEnabled
+                menuSw.isChecked = cfg.menuEnabled
+            }
             val names = list.mapIndexed { i, m -> "${i + 1}. ${m.name}" }
             macroAc.setSimpleItems(names.toTypedArray())
+            if (list.isEmpty()) {
+                macroAc.setText("", false)
+                body.visibility = View.GONE
+                emptyText.visibility = View.VISIBLE
+                loading = false
+                return
+            }
+            body.visibility = View.VISIBLE
+            emptyText.visibility = View.GONE
             macroAc.setText(names[cur], false)
             nameEt.setText(macro.name)
-            if (floating) labelEt.setText(macro.label)
+            if (floating) {
+                labelEt.setText(macro.label)
+                typeAc.setText(kindItems[if (macro.kind == "touch") 1 else 0], false)
+            }
             toggleSw.isChecked = macro.toggle
             togetherSw.isChecked = macro.together
             repeatEt.setText(macro.repeat.toString())
@@ -639,7 +716,17 @@ class MainActivity : AppCompatActivity() {
             } else {
                 refreshHotkey()
             }
+            applyKind()
             rebuildActions()
+        }
+
+        private fun applyKind() {
+            val touch = floating && macro.kind == "touch"
+            macroBox.visibility = if (touch) View.GONE else View.VISIBLE
+            if (floating) {
+                touchBox.visibility = if (touch) View.VISIBLE else View.GONE
+                if (touch) buildTouch()
+            }
         }
 
         private fun refreshHotkey() {
@@ -663,7 +750,35 @@ class MainActivity : AppCompatActivity() {
             })
         }
 
+        private fun buildTouch() {
+            val ctx = this@MainActivity
+            touchBox.removeAllViews()
+            touchBox.addView(TextView(ctx).apply {
+                text = t(
+                    "Place this button and its target ring from the mod menu inside the game.",
+                    "Atur posisi tombol dan cincin targetnya lewat mod menu di dalam game."
+                )
+                setPadding(0, dp(12), 0, 0)
+            })
+            touchBox.addView(sliderRow(t("Taps per press", "Jumlah tap per tekan"), "", 1, 10, 1, macro.taps) {
+                macro.taps = it
+            })
+            touchBox.addView(sliderRow(t("Interval between taps", "Jeda antar tap"), "ms", 40, 500, 10, macro.interval) {
+                macro.interval = it
+            })
+            touchBox.addView(MaterialSwitch(ctx).apply {
+                text = t("Hold instead of tap", "Tahan, bukan tap")
+                layoutParams = lp(8)
+                isChecked = macro.hold
+                setOnCheckedChangeListener { _, checked -> if (!loading) macro.hold = checked }
+            })
+            touchBox.addView(sliderRow(t("Hold duration", "Lama tahan"), "ms", 100, 5000, 100, macro.holdMs) {
+                macro.holdMs = it
+            })
+        }
+
         private fun updatePreview() {
+            if (list.isEmpty()) return
             previewBox.removeAllViews()
             val size = FloatUi.px(this@MainActivity, macro.size)
             previewBox.addView(
