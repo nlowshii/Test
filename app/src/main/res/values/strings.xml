@@ -1,4 +1,4 @@
 <resources>
-    <string name="app_name">Minecraft Macro Builder</string>
-    <string name="service_desc">Captures keyboard hotkeys and runs macros with taps, swipes and key presses.</string>
+    <string name="app_name">Simple Macro</string>
+    <string name="service_desc">Captures keyboard hotkeys and runs macros with taps, swipes, key presses and mouse clicks.</string>
 </resources>
