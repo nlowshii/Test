@@ -1,7 +1,8 @@
-package com.lowsii.macrobuilder
+package com.smac.macrobuilder
 
 import android.accessibilityservice.AccessibilityService
 import android.accessibilityservice.GestureDescription
+import android.content.Intent
 import android.graphics.Path
 import android.view.KeyEvent
 import android.view.accessibility.AccessibilityEvent
@@ -22,6 +23,16 @@ class MacroService : AccessibilityService() {
     private val running = mutableMapOf<String, Job>()
     private var foreground = ""
 
+    override fun onServiceConnected() {
+        super.onServiceConnected()
+        Diag.connected = true
+    }
+
+    override fun onUnbind(intent: Intent?): Boolean {
+        Diag.connected = false
+        return super.onUnbind(intent)
+    }
+
     override fun onAccessibilityEvent(e: AccessibilityEvent) {
         if (e.eventType == AccessibilityEvent.TYPE_WINDOW_STATE_CHANGED) {
             e.packageName?.let { foreground = it.toString() }
@@ -30,23 +41,44 @@ class MacroService : AccessibilityService() {
 
     override fun onInterrupt() {}
 
+    private fun activePackage(): String {
+        val p = try { rootInActiveWindow?.packageName?.toString() } catch (e: Exception) { null }
+        return if (p.isNullOrEmpty()) foreground else p
+    }
+
     override fun onKeyEvent(ev: KeyEvent): Boolean {
         if (KeyInjector.held.contains(ev.keyCode)) return false
         val cfg = MacroStore.load(this)
-        if (cfg.onlyMinecraft && foreground != MacroStore.MC_PACKAGE) return false
         val combo = MacroStore.combo(ev)
+        val pkg = activePackage()
+        val first = ev.action == KeyEvent.ACTION_DOWN && ev.repeatCount == 0
+        if (first) Diag.lastKey = "$combo @ ${pkg.ifEmpty { "?" }}"
+        if (cfg.onlyTarget && pkg != cfg.targetPackage) {
+            if (first) Diag.result = "other_app"
+            return false
+        }
         val macro = cfg.macros.firstOrNull { it.trigger.equals(combo, ignoreCase = true) }
-            ?: return false
-        if (ev.action == KeyEvent.ACTION_DOWN && ev.repeatCount == 0) start(macro)
+        if (macro == null) {
+            if (first) Diag.result = "no_macro"
+            return false
+        }
+        if (first) start(macro)
         return true
     }
 
     private fun start(m: Macro) {
+        Diag.arg = m.name
         val old = running[m.name]
         if (old?.isActive == true) {
-            if (m.toggle) old.cancel()
+            if (m.toggle) {
+                old.cancel()
+                Diag.result = "stopped"
+            } else {
+                Diag.result = "busy"
+            }
             return
         }
+        Diag.result = "started"
         running[m.name] = scope.launch {
             var i = 0
             val infinite = m.toggle && m.repeat == 0
@@ -120,6 +152,7 @@ class MacroService : AccessibilityService() {
         }
 
     override fun onDestroy() {
+        Diag.connected = false
         scope.cancel()
         super.onDestroy()
     }
