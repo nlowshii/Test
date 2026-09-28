@@ -1,4 +1,4 @@
 <resources>
-    <string name="app_name">Simple Macro</string>
-    <string name="service_desc">Captures keyboard hotkeys and runs macros with taps, swipes, key presses and mouse clicks.</string>
+    <string name="app_name">beta</string>
+    <string name="service_desc">Captures keyboard hotkeys, runs macros and shows floating touch buttons over the target app.</string>
 </resources>
