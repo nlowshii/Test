@@ -1,4 +1,4 @@
-package com.lowsii.macrobuilder
+package com.smac.macrobuilder
 
 import android.content.Context
 import android.view.KeyEvent
@@ -24,16 +24,24 @@ data class Macro(
     val actions: MutableList<MacroAction>
 )
 
-data class Config(var onlyMinecraft: Boolean, val macros: MutableList<Macro>)
+data class Config(
+    var onlyTarget: Boolean,
+    val macros: MutableList<Macro>,
+    var targetPackage: String = MacroStore.MC_PACKAGE
+)
 
 object MacroStore {
     const val MC_PACKAGE = "com.mojang.minecraftpe"
+    const val MOUSE_LEFT = -1
+    const val MOUSE_RIGHT = -2
+    const val MOUSE_MIDDLE = -3
     private const val PREF = "macros"
     private const val KEY = "json"
 
     val DEFAULT_JSON = """
 {
-  "onlyMinecraft": true,
+  "onlyTarget": true,
+  "targetPackage": "com.mojang.minecraftpe",
   "macros": [
     {
       "name": "Keys C + M",
@@ -50,7 +58,12 @@ object MacroStore {
 }
 """.trimIndent()
 
-    fun keyName(code: Int): String = KeyEvent.keyCodeToString(code).removePrefix("KEYCODE_")
+    fun keyName(code: Int): String = when (code) {
+        MOUSE_LEFT -> "Left Click"
+        MOUSE_RIGHT -> "Right Click"
+        MOUSE_MIDDLE -> "Middle Click"
+        else -> KeyEvent.keyCodeToString(code).removePrefix("KEYCODE_")
+    }
 
     fun combo(ev: KeyEvent): String {
         val parts = mutableListOf<String>()
@@ -77,7 +90,11 @@ object MacroStore {
                     .take(10).toMutableList()
             )
         }.toMutableList()
-        return Config(o.optBoolean("onlyMinecraft", true), macros)
+        return Config(
+            o.optBoolean("onlyTarget", true),
+            macros,
+            o.optString("targetPackage", MC_PACKAGE).ifBlank { MC_PACKAGE }
+        )
     }
 
     private fun action(a: JSONObject) = MacroAction(
@@ -112,8 +129,11 @@ object MacroStore {
                     .put("actions", acts)
             )
         }
-        return JSONObject().put("onlyMinecraft", c.onlyMinecraft)
-            .put("macros", macros).toString(2)
+        return JSONObject()
+            .put("onlyTarget", c.onlyTarget)
+            .put("targetPackage", c.targetPackage)
+            .put("macros", macros)
+            .toString(2)
     }
 
     fun raw(ctx: Context): String =
