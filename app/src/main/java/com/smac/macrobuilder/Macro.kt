@@ -28,7 +28,12 @@ data class Macro(
     var label: String = "",
     var size: Int = 56,
     var opacity: Int = 90,
-    var radius: Int = 100
+    var radius: Int = 100,
+    var kind: String = "macro",
+    var taps: Int = 3,
+    var interval: Int = 60,
+    var hold: Boolean = false,
+    var holdMs: Int = 400
 )
 
 data class Config(
@@ -36,7 +41,8 @@ data class Config(
     val macros: MutableList<Macro>,
     var targetPackage: String = MacroStore.MC_PACKAGE,
     val floats: MutableList<Macro> = mutableListOf(),
-    var floatEnabled: Boolean = false
+    var floatEnabled: Boolean = false,
+    var menuEnabled: Boolean = true
 )
 
 object MacroStore {
@@ -52,6 +58,7 @@ object MacroStore {
   "onlyTarget": true,
   "targetPackage": "com.mojang.minecraftpe",
   "floatEnabled": false,
+  "menuEnabled": true,
   "macros": [
     {
       "name": "Keys C + M",
@@ -113,7 +120,12 @@ object MacroStore {
             label = m.optString("label", ""),
             size = m.optInt("size", 56),
             opacity = m.optInt("opacity", 90),
-            radius = m.optInt("radius", 100)
+            radius = m.optInt("radius", 100),
+            kind = m.optString("kind", "macro"),
+            taps = m.optInt("taps", 3),
+            interval = m.optInt("interval", 60),
+            hold = m.optBoolean("hold", false),
+            holdMs = m.optInt("holdMs", 400)
         )
     }
 
@@ -131,7 +143,8 @@ object MacroStore {
             parseList(o.getJSONArray("macros")),
             o.optString("targetPackage", MC_PACKAGE).ifBlank { MC_PACKAGE },
             floats,
-            o.optBoolean("floatEnabled", false)
+            o.optBoolean("floatEnabled", false),
+            o.optBoolean("menuEnabled", true)
         )
     }
 
@@ -153,6 +166,8 @@ object MacroStore {
             .put("together", m.together)
             .put("id", m.id).put("label", m.label)
             .put("size", m.size).put("opacity", m.opacity).put("radius", m.radius)
+            .put("kind", m.kind).put("taps", m.taps).put("interval", m.interval)
+            .put("hold", m.hold).put("holdMs", m.holdMs)
             .put("actions", acts)
     }
 
@@ -165,6 +180,7 @@ object MacroStore {
             .put("onlyTarget", c.onlyTarget)
             .put("targetPackage", c.targetPackage)
             .put("floatEnabled", c.floatEnabled)
+            .put("menuEnabled", c.menuEnabled)
             .put("macros", macros)
             .put("floats", floats)
             .toString(2)
@@ -176,6 +192,9 @@ object MacroStore {
         parse(json)
         prefs(ctx).edit().putString(KEY, json).apply()
     }
+
+    fun loadOrNull(ctx: Context): Config? =
+        try { parse(raw(ctx)) } catch (e: Exception) { null }
 
     fun load(ctx: Context): Config =
         try { parse(raw(ctx)) } catch (e: Exception) { Config(true, mutableListOf()) }
