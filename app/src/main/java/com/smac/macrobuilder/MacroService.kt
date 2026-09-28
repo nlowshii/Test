@@ -27,7 +27,10 @@ class MacroService : AccessibilityService() {
     private val handler = Handler(Looper.getMainLooper())
     private var foreground = ""
     private var overlays: Overlays? = null
-    private var cfgCache: Config? = null
+
+    @Volatile private var keyCfg = Config(true, mutableListOf())
+    @Volatile private var hotCodes: Set<Int> = emptySet()
+    @Volatile private var pkgCache = ""
 
     private val prefsListener = SharedPreferences.OnSharedPreferenceChangeListener { _, key ->
         if (key == "json") handler.post { rebuildFloats() }
@@ -77,15 +80,32 @@ class MacroService : AccessibilityService() {
         return if (p.isNullOrEmpty()) foreground else p
     }
 
+    private fun computeHot(c: Config): Set<Int> {
+        val out = mutableSetOf<Int>()
+        c.macros.forEach { m ->
+            val base = m.trigger.substringAfterLast('+').trim()
+            if (base.isNotEmpty()) {
+                val code = KeyEvent.keyCodeFromString("KEYCODE_$base")
+                if (code != KeyEvent.KEYCODE_UNKNOWN) out.add(code)
+            }
+        }
+        return out
+    }
+
     private fun rebuildFloats() {
+        val json = MacroStore.raw(this)
+        val o = overlays ?: return
+        if (json == o.lastJson) return
         val c = MacroStore.load(this)
-        cfgCache = c
-        overlays?.update(c, activePackage() == c.targetPackage)
+        keyCfg = c
+        hotCodes = computeHot(c)
+        pkgCache = activePackage()
+        o.update(c, pkgCache == c.targetPackage, json)
     }
 
     private fun syncFloats() {
-        val c = cfgCache ?: return
-        overlays?.setTarget(activePackage() == c.targetPackage)
+        pkgCache = activePackage()
+        overlays?.setTarget(pkgCache == keyCfg.targetPackage)
     }
 
     private fun fire(m: Macro) {
@@ -114,18 +134,33 @@ class MacroService : AccessibilityService() {
         dispatchGesture(builder.build(), null, null)
     }
 
+    private fun findMacro(cfg: Config, ev: KeyEvent): Macro? {
+        val exact = MacroStore.combo(ev)
+        cfg.macros.firstOrNull { it.trigger.equals(exact, ignoreCase = true) }?.let { return it }
+        val base = MacroStore.keyName(ev.keyCode)
+        return cfg.macros.firstOrNull { it.trigger.equals(base, ignoreCase = true) }
+    }
+
     override fun onKeyEvent(ev: KeyEvent): Boolean {
-        if (KeyInjector.held.contains(ev.keyCode)) return false
-        val cfg = MacroStore.load(this)
-        val combo = MacroStore.combo(ev)
-        val pkg = activePackage()
+        val code = ev.keyCode
         val first = ev.action == KeyEvent.ACTION_DOWN && ev.repeatCount == 0
-        if (first) Diag.lastKey = "$combo @ ${pkg.ifEmpty { "?" }}"
+        if (code !in hotCodes) {
+            if (first) Diag.lastKey = "${MacroStore.keyName(code)} @ ${pkgCache.ifEmpty { "?" }}"
+            return false
+        }
+        if (KeyInjector.held.contains(code)) return false
+        val cfg = keyCfg
+        var pkg = pkgCache
+        if (first && cfg.onlyTarget && pkg != cfg.targetPackage) {
+            pkg = activePackage()
+            pkgCache = pkg
+        }
+        if (first) Diag.lastKey = "${MacroStore.combo(ev)} @ ${pkg.ifEmpty { "?" }}"
         if (cfg.onlyTarget && pkg != cfg.targetPackage) {
             if (first) Diag.result = "other_app"
             return false
         }
-        val macro = cfg.macros.firstOrNull { it.trigger.equals(combo, ignoreCase = true) }
+        val macro = findMacro(cfg, ev)
         if (macro == null) {
             if (first) Diag.result = "no_macro"
             return false
