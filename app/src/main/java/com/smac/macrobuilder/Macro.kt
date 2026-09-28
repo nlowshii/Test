@@ -33,7 +33,10 @@ data class Macro(
     var taps: Int = 3,
     var interval: Int = 60,
     var hold: Boolean = false,
-    var holdMs: Int = 400
+    var holdMs: Int = 400,
+    var enabled: Boolean = true,
+    var bgColor: Int = 0,
+    var bgImage: Boolean = false
 )
 
 data class Config(
@@ -42,7 +45,10 @@ data class Config(
     var targetPackage: String = MacroStore.MC_PACKAGE,
     val floats: MutableList<Macro> = mutableListOf(),
     var floatEnabled: Boolean = false,
-    var menuEnabled: Boolean = true
+    var menuEnabled: Boolean = true,
+    var menuSize: Int = 44,
+    var menuOpacity: Int = 90,
+    var menuRadius: Int = 100
 )
 
 object MacroStore {
@@ -125,7 +131,10 @@ object MacroStore {
             taps = m.optInt("taps", 3),
             interval = m.optInt("interval", 60),
             hold = m.optBoolean("hold", false),
-            holdMs = m.optInt("holdMs", 400)
+            holdMs = m.optInt("holdMs", 400),
+            enabled = m.optBoolean("enabled", true),
+            bgColor = m.optInt("bgColor", 0),
+            bgImage = m.optBoolean("bgImage", false)
         )
     }
 
@@ -144,7 +153,10 @@ object MacroStore {
             o.optString("targetPackage", MC_PACKAGE).ifBlank { MC_PACKAGE },
             floats,
             o.optBoolean("floatEnabled", false),
-            o.optBoolean("menuEnabled", true)
+            o.optBoolean("menuEnabled", true),
+            o.optInt("menuSize", 44),
+            o.optInt("menuOpacity", 90),
+            o.optInt("menuRadius", 100)
         )
     }
 
@@ -168,6 +180,7 @@ object MacroStore {
             .put("size", m.size).put("opacity", m.opacity).put("radius", m.radius)
             .put("kind", m.kind).put("taps", m.taps).put("interval", m.interval)
             .put("hold", m.hold).put("holdMs", m.holdMs)
+            .put("enabled", m.enabled).put("bgColor", m.bgColor).put("bgImage", m.bgImage)
             .put("actions", acts)
     }
 
@@ -181,6 +194,9 @@ object MacroStore {
             .put("targetPackage", c.targetPackage)
             .put("floatEnabled", c.floatEnabled)
             .put("menuEnabled", c.menuEnabled)
+            .put("menuSize", c.menuSize)
+            .put("menuOpacity", c.menuOpacity)
+            .put("menuRadius", c.menuRadius)
             .put("macros", macros)
             .put("floats", floats)
             .toString(2)
