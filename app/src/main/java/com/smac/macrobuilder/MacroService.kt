@@ -5,15 +5,9 @@ import android.accessibilityservice.GestureDescription
 import android.content.Intent
 import android.content.SharedPreferences
 import android.graphics.Path
-import android.graphics.PixelFormat
 import android.os.Handler
 import android.os.Looper
-import android.view.Gravity
 import android.view.KeyEvent
-import android.view.MotionEvent
-import android.view.View
-import android.view.ViewConfiguration
-import android.view.WindowManager
 import android.view.accessibility.AccessibilityEvent
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
@@ -31,10 +25,9 @@ class MacroService : AccessibilityService() {
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.Main)
     private val running = mutableMapOf<String, Job>()
     private val handler = Handler(Looper.getMainLooper())
-    private val overlays = mutableListOf<View>()
     private var foreground = ""
-    private var floatCfg: Config? = null
-    private var windowManager: WindowManager? = null
+    private var overlays: Overlays? = null
+    private var cfgCache: Config? = null
 
     private val prefsListener = SharedPreferences.OnSharedPreferenceChangeListener { _, key ->
         if (key == "json") handler.post { rebuildFloats() }
@@ -44,7 +37,7 @@ class MacroService : AccessibilityService() {
     override fun onServiceConnected() {
         super.onServiceConnected()
         Diag.connected = true
-        windowManager = getSystemService(WINDOW_SERVICE) as WindowManager
+        overlays = Overlays(this, { fire(it) }, { m, x, y -> touch(m, x, y) })
         MacroStore.prefs(this).registerOnSharedPreferenceChangeListener(prefsListener)
         rebuildFloats()
     }
@@ -62,14 +55,16 @@ class MacroService : AccessibilityService() {
 
     private fun shutdown() {
         Diag.connected = false
-        handler.removeCallbacks(evaluate)
+        handler.removeCallbacksAndMessages(null)
         MacroStore.prefs(this).unregisterOnSharedPreferenceChangeListener(prefsListener)
-        removeFloats()
+        overlays?.clear()
+        overlays = null
     }
 
     override fun onAccessibilityEvent(e: AccessibilityEvent) {
         if (e.eventType == AccessibilityEvent.TYPE_WINDOW_STATE_CHANGED) {
-            e.packageName?.let { foreground = it.toString() }
+            val p = e.packageName?.toString()
+            if (p != null && p != packageName) foreground = p
             handler.removeCallbacks(evaluate)
             handler.postDelayed(evaluate, 300)
         }
@@ -83,103 +78,40 @@ class MacroService : AccessibilityService() {
     }
 
     private fun rebuildFloats() {
-        removeFloats()
-        floatCfg = MacroStore.load(this)
-        syncFloats()
+        val c = MacroStore.load(this)
+        cfgCache = c
+        overlays?.update(c, activePackage() == c.targetPackage)
     }
 
     private fun syncFloats() {
-        val cfg = floatCfg ?: return
-        val show = cfg.floatEnabled && cfg.floats.isNotEmpty() &&
-            (!cfg.onlyTarget || activePackage() == cfg.targetPackage)
-        if (show && overlays.isEmpty()) {
-            cfg.floats.forEachIndexed { i, m -> addFloat(m, i) }
-        } else if (!show && overlays.isNotEmpty()) {
-            removeFloats()
-        }
-    }
-
-    private fun removeFloats() {
-        val wm = windowManager
-        overlays.forEach { v ->
-            try { wm?.removeView(v) } catch (e: Exception) {}
-        }
-        overlays.clear()
-    }
-
-    private fun savePos(id: String, x: Int, y: Int) {
-        getSharedPreferences("float_pos", MODE_PRIVATE).edit()
-            .putInt("${id}_x", x).putInt("${id}_y", y).apply()
-    }
-
-    private fun addFloat(m: Macro, index: Int) {
-        val wm = windowManager ?: return
-        val view = FloatUi.create(this, m)
-        val size = FloatUi.px(this, m.size)
-        val pos = getSharedPreferences("float_pos", MODE_PRIVATE)
-        val lp = WindowManager.LayoutParams(
-            size, size,
-            WindowManager.LayoutParams.TYPE_ACCESSIBILITY_OVERLAY,
-            WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE or
-                WindowManager.LayoutParams.FLAG_NOT_TOUCH_MODAL,
-            PixelFormat.TRANSLUCENT
-        )
-        lp.gravity = Gravity.TOP or Gravity.START
-        lp.x = pos.getInt("${m.id}_x", FloatUi.px(this, 24))
-        lp.y = pos.getInt("${m.id}_y", FloatUi.px(this, 120) + index * (size + FloatUi.px(this, 12)))
-        val slop = ViewConfiguration.get(this).scaledTouchSlop
-
-        view.setOnTouchListener(object : View.OnTouchListener {
-            private var sx = 0f
-            private var sy = 0f
-            private var ox = 0
-            private var oy = 0
-            private var moved = false
-
-            override fun onTouch(v: View, e: MotionEvent): Boolean {
-                when (e.actionMasked) {
-                    MotionEvent.ACTION_DOWN -> {
-                        sx = e.rawX
-                        sy = e.rawY
-                        ox = lp.x
-                        oy = lp.y
-                        moved = false
-                        v.scaleX = 0.92f
-                        v.scaleY = 0.92f
-                    }
-                    MotionEvent.ACTION_MOVE -> {
-                        val dx = e.rawX - sx
-                        val dy = e.rawY - sy
-                        if (!moved && Math.hypot(dx.toDouble(), dy.toDouble()) > slop) moved = true
-                        if (moved) {
-                            lp.x = ox + dx.toInt()
-                            lp.y = oy + dy.toInt()
-                            wm.updateViewLayout(v, lp)
-                        }
-                    }
-                    MotionEvent.ACTION_UP -> {
-                        v.scaleX = 1f
-                        v.scaleY = 1f
-                        if (moved) savePos(m.id, lp.x, lp.y) else fire(m)
-                    }
-                    MotionEvent.ACTION_CANCEL -> {
-                        v.scaleX = 1f
-                        v.scaleY = 1f
-                    }
-                }
-                return true
-            }
-        })
-
-        try {
-            wm.addView(view, lp)
-            overlays.add(view)
-        } catch (e: Exception) {}
+        val c = cfgCache ?: return
+        overlays?.setTarget(activePackage() == c.targetPackage)
     }
 
     private fun fire(m: Macro) {
         Diag.lastKey = "floating: ${m.name}"
         start(m, "f:${m.id}")
+    }
+
+    private fun touch(m: Macro, x: Float, y: Float) {
+        Diag.lastKey = "touch: ${m.name}"
+        Diag.arg = m.name
+        Diag.result = "started"
+        val builder = GestureDescription.Builder()
+        if (m.hold) {
+            val path = Path().apply { moveTo(x, y) }
+            builder.addStroke(
+                GestureDescription.StrokeDescription(path, 0, m.holdMs.toLong().coerceAtLeast(1))
+            )
+        } else {
+            val n = m.taps.coerceIn(1, 10)
+            val step = m.interval.toLong().coerceAtLeast(40)
+            for (i in 0 until n) {
+                val path = Path().apply { moveTo(x, y) }
+                builder.addStroke(GestureDescription.StrokeDescription(path, i * step, 30))
+            }
+        }
+        dispatchGesture(builder.build(), null, null)
     }
 
     override fun onKeyEvent(ev: KeyEvent): Boolean {
