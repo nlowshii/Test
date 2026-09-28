@@ -1,0 +1,4 @@
+<resources>
+    <string name="app_name">Minecraft Macro Builder</string>
+    <string name="service_desc">Menangkap tombol keyboard (hotkey) dan menjalankan macro tap/swipe di layar.</string>
+</resources>
