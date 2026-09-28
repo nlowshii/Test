@@ -64,7 +64,7 @@ class MacroService : AccessibilityService() {
     private suspend fun exec(a: MacroAction) {
         when (a.type) {
             "delay" -> delay(a.ms)
-            "tap" -> gesture(Path().apply { moveTo(a.x, a.y) }, 50)
+            "tap" -> { gesture(Path().apply { moveTo(a.x, a.y) }, 50); delay(a.ms) }
             "long_press" -> gesture(Path().apply { moveTo(a.x, a.y) }, a.ms)
             "swipe" -> gesture(Path().apply { moveTo(a.x, a.y); lineTo(a.x2, a.y2) }, a.ms)
         }
