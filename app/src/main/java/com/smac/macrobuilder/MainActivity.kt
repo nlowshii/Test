@@ -3,6 +3,7 @@ package com.smac.macrobuilder
 import android.content.ClipData
 import android.content.ClipboardManager
 import android.content.Intent
+import android.graphics.drawable.GradientDrawable
 import android.os.Bundle
 import android.os.Handler
 import android.os.Looper
@@ -24,6 +25,7 @@ import android.widget.Toast
 import androidx.appcompat.app.AppCompatActivity
 import androidx.core.view.ViewCompat
 import androidx.core.view.WindowInsetsCompat
+import com.google.android.material.bottomnavigation.BottomNavigationView
 import com.google.android.material.button.MaterialButton
 import com.google.android.material.card.MaterialCardView
 import com.google.android.material.color.MaterialColors
@@ -39,20 +41,14 @@ import com.google.android.material.R as MR
 class MainActivity : AppCompatActivity() {
 
     private lateinit var cfg: Config
-    private var cur = 0
     private var loading = false
     private var lang = "en"
+    private var tab = 1
 
+    private lateinit var kb: Editor
+    private lateinit var fl: Editor
     private lateinit var onlySw: MaterialSwitch
     private lateinit var pkgEt: TextInputEditText
-    private lateinit var macroAc: MaterialAutoCompleteTextView
-    private lateinit var nameEt: TextInputEditText
-    private lateinit var hotkeyBtn: MaterialButton
-    private lateinit var toggleSw: MaterialSwitch
-    private lateinit var togetherSw: MaterialSwitch
-    private lateinit var repeatEt: TextInputEditText
-    private lateinit var actionsBox: LinearLayout
-    private lateinit var addBtn: MaterialButton
     private lateinit var statusText: TextView
 
     private val types = listOf("tap", "long_press", "swipe", "delay", "key")
@@ -66,8 +62,6 @@ class MainActivity : AppCompatActivity() {
         }
     }
     private val permListener = Shizuku.OnRequestPermissionResultListener { _, _ -> refreshStatus() }
-
-    private val macro: Macro get() = cfg.macros[cur]
 
     private fun dp(v: Int) = (v * resources.displayMetrics.density).toInt()
     private fun toast(s: String) = Toast.makeText(this, s, Toast.LENGTH_LONG).show()
@@ -87,10 +81,20 @@ class MainActivity : AppCompatActivity() {
         })
     }
 
+    private fun newAction() = MacroAction("key", ms = 150, key = KeyEvent.KEYCODE_C)
+
     private fun newMacro() =
         Macro("Macro ${cfg.macros.size + 1}", "", false, 1, false, mutableListOf())
 
-    private fun newAction() = MacroAction("key", ms = 150, key = KeyEvent.KEYCODE_C)
+    private fun newFloat() = Macro(
+        "Button ${cfg.floats.size + 1}", "", false, 1, false,
+        mutableListOf(newAction()), id = MacroStore.newId()
+    )
+
+    private fun ensureDefaults() {
+        if (cfg.macros.isEmpty()) cfg.macros.add(newMacro())
+        if (cfg.floats.isEmpty()) cfg.floats.add(newFloat())
+    }
 
     private fun btn(text: String, outlined: Boolean = false, onClick: () -> Unit): MaterialButton {
         val b = if (outlined) MaterialButton(this, null, MR.attr.materialButtonOutlinedStyle)
@@ -146,6 +150,37 @@ class MainActivity : AppCompatActivity() {
         return til to ac
     }
 
+    private fun sliderRow(
+        title: String,
+        unit: String,
+        from: Int,
+        to: Int,
+        step: Int,
+        initial: Int,
+        onChange: (Int) -> Unit
+    ): LinearLayout {
+        val box = LinearLayout(this).apply {
+            orientation = LinearLayout.VERTICAL
+            layoutParams = lp(8)
+        }
+        val label = TextView(this)
+        val start = (initial.coerceIn(from, to) - from) / step * step + from
+        label.text = "$title: $start $unit"
+        val slider = Slider(this).apply {
+            valueFrom = from.toFloat()
+            valueTo = to.toFloat()
+            stepSize = step.toFloat()
+            this.value = start.toFloat()
+            addOnChangeListener { _, v, _ ->
+                onChange(v.toInt())
+                label.text = "$title: ${v.toInt()} $unit"
+            }
+        }
+        box.addView(label)
+        box.addView(slider)
+        return box
+    }
+
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         lang = getSharedPreferences("settings", MODE_PRIVATE).getString("lang", "en") ?: "en"
@@ -155,11 +190,12 @@ class MainActivity : AppCompatActivity() {
             MacroStore.parse(MacroStore.DEFAULT_JSON)
         }
         draft = null
-        if (cfg.macros.isEmpty()) cfg.macros.add(newMacro())
+        ensureDefaults()
+        tab = savedInstanceState?.getInt("tab", 1) ?: 1
 
-        val root = LinearLayout(this).apply {
+        val content = LinearLayout(this).apply {
             orientation = LinearLayout.VERTICAL
-            setPadding(dp(16), dp(8), dp(16), dp(32))
+            setPadding(dp(16), dp(8), dp(16), dp(24))
         }
 
         val header = LinearLayout(this).apply {
@@ -175,111 +211,16 @@ class MainActivity : AppCompatActivity() {
             contentDescription = t("Settings", "Pengaturan")
             setOnClickListener { showSettings() }
         }, LinearLayout.LayoutParams(wrap, wrap))
-        root.addView(header)
+        content.addView(header)
 
-        val (setupCard, setupBox) = card()
-        setupBox.addView(TextView(this).apply {
-            text = t(
-                "1) Enable the accessibility service.\n2) Key and mouse actions need Shizuku running and granted.\n3) Set up a macro and hotkey, then Save.\n4) Open the target app and press the hotkey.",
-                "1) Aktifkan layanan aksesibilitas.\n2) Aksi tombol dan mouse membutuhkan Shizuku yang berjalan dan diizinkan.\n3) Atur macro dan hotkey, lalu Simpan.\n4) Buka aplikasi target dan tekan hotkey."
-            )
-        })
-        setupBox.addView(btn(t("Open accessibility settings", "Buka pengaturan aksesibilitas"), true) {
-            startActivity(Intent(Settings.ACTION_ACCESSIBILITY_SETTINGS))
-        })
-        statusText = TextView(this).apply { setPadding(0, dp(12), 0, 0) }
-        setupBox.addView(statusText)
-        setupBox.addView(btn(t("Grant Shizuku access", "Beri akses Shizuku"), true) { requestShizuku() })
-        root.addView(setupCard)
+        content.addView(buildSetupCard())
 
-        onlySw = MaterialSwitch(this).apply {
-            text = t("Only active in the target app", "Hanya aktif di aplikasi target")
-            layoutParams = lp(12)
-            setOnCheckedChangeListener { _, c -> if (!loading) cfg.onlyTarget = c }
-        }
-        root.addView(onlySw)
+        kb = Editor(false)
+        fl = Editor(true)
+        content.addView(kb.pane)
+        content.addView(fl.pane)
 
-        val (pkgTil, pk) = field(t("Target app package", "Paket aplikasi target")) { cfg.targetPackage = it.trim() }
-        pkgEt = pk
-        root.addView(pkgTil)
-
-        val (macroTil, ac) = dropdown("Macro")
-        macroAc = ac
-        macroAc.setOnItemClickListener { _, _, pos, _ -> if (pos != cur) { cur = pos; refresh() } }
-        val macroRow = row()
-        macroRow.layoutParams = lp(16)
-        macroRow.addView(macroTil, w(0))
-        macroRow.addView(btn("+", true) {
-            if (cfg.macros.size >= 5) {
-                toast(t("Maximum 5 macros", "Maksimal 5 macro"))
-            } else {
-                cfg.macros.add(newMacro())
-                cur = cfg.macros.size - 1
-                refresh()
-            }
-        }, LinearLayout.LayoutParams(wrap, wrap).apply { marginStart = dp(8) })
-        macroRow.addView(btn(t("Delete", "Hapus"), true) {
-            if (cfg.macros.size <= 1) {
-                toast(t("At least 1 macro is required", "Minimal 1 macro"))
-            } else {
-                cfg.macros.removeAt(cur)
-                cur = minOf(cur, cfg.macros.size - 1)
-                refresh()
-            }
-        }, LinearLayout.LayoutParams(wrap, wrap).apply { marginStart = dp(8) })
-        root.addView(macroRow)
-
-        val (nameTil, name) = field(t("Macro name", "Nama macro")) { macro.name = it }
-        nameEt = name
-        root.addView(nameTil)
-
-        hotkeyBtn = btn("") {
-            capture(
-                t("Press the hotkey", "Tekan hotkey"),
-                t("Press a key on the keyboard, optionally with Ctrl/Alt/Shift, e.g. F6 or Ctrl+F7.",
-                    "Tekan tombol di keyboard, boleh dengan Ctrl/Alt/Shift, mis. F6 atau Ctrl+F7."),
-                { macro.trigger = MacroStore.combo(it); refreshHotkey() }
-            )
-        }
-        root.addView(hotkeyBtn)
-
-        toggleSw = MaterialSwitch(this).apply {
-            text = t("Toggle (press to start, press again to stop)", "Toggle (tekan untuk mulai, tekan lagi untuk berhenti)")
-            layoutParams = lp(8)
-            setOnCheckedChangeListener { _, c -> if (!loading) macro.toggle = c }
-        }
-        root.addView(toggleSw)
-
-        togetherSw = MaterialSwitch(this).apply {
-            text = t("Press key actions together", "Tekan aksi tombol bersamaan")
-            layoutParams = lp(4)
-            setOnCheckedChangeListener { _, c -> if (!loading) macro.together = c }
-        }
-        root.addView(togetherSw)
-
-        val (repeatTil, rep) = field(t("Repeat (0 = endless, toggle only)", "Ulangi (0 = tanpa henti, hanya toggle)"), true) {
-            macro.repeat = it.toIntOrNull() ?: 1
-        }
-        repeatEt = rep
-        root.addView(repeatTil)
-
-        root.addView(TextView(this).apply {
-            text = t("Actions (max 10). Slider left = faster.", "Aksi (maks 10). Slider ke kiri = lebih cepat.")
-            setTextAppearance(MR.style.TextAppearance_Material3_TitleMedium)
-            setPadding(0, dp(20), 0, 0)
-        })
-        actionsBox = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL }
-        root.addView(actionsBox)
-
-        addBtn = btn("") {
-            if (macro.actions.size < 10) {
-                macro.actions.add(newAction())
-                rebuildActions()
-            }
-        }
-        root.addView(addBtn)
-
-        root.addView(btn(t("Save", "Simpan")) { save() })
+        content.addView(btn(t("Save", "Simpan")) { save() })
         val io = row()
         io.addView(btn(t("Export JSON", "Ekspor JSON"), true) {
             val cm = getSystemService(CLIPBOARD_SERVICE) as ClipboardManager
@@ -293,28 +234,59 @@ class MainActivity : AppCompatActivity() {
                 val c = MacroStore.parse(text)
                 if (c.macros.isEmpty()) throw IllegalArgumentException()
                 cfg = c
-                cur = 0
-                refresh()
+                ensureDefaults()
+                kb.cur = 0
+                fl.cur = 0
+                refreshAll()
                 toast(t("Imported, remember to Save", "Diimpor, jangan lupa Simpan"))
             } catch (e: Exception) {
                 toast(t("Clipboard is not a valid macro JSON", "Clipboard bukan JSON macro yang valid"))
             }
         }, w())
-        root.addView(io)
+        content.addView(io)
 
         val scroll = ScrollView(this).apply {
-            addView(root)
+            addView(content)
             clipToPadding = false
         }
-        ViewCompat.setOnApplyWindowInsetsListener(scroll) { v, ins ->
+
+        val nav = BottomNavigationView(this)
+        nav.menu.add(0, 1, 0, t("Keyboard", "Keyboard")).setIcon(R.drawable.ic_keyboard)
+        nav.menu.add(0, 2, 1, t("Floating button", "Tombol melayang")).setIcon(R.drawable.ic_float)
+        nav.setOnItemSelectedListener {
+            showTab(it.itemId)
+            true
+        }
+
+        val navWrap = FrameLayout(this).apply {
+            setBackgroundColor(MaterialColors.getColor(this@MainActivity, MR.attr.colorSurfaceContainer, 0))
+            addView(nav, FrameLayout.LayoutParams(match, wrap))
+        }
+        ViewCompat.setOnApplyWindowInsetsListener(navWrap) { v, ins ->
+            v.setPadding(0, 0, 0, ins.getInsets(WindowInsetsCompat.Type.systemBars()).bottom)
+            WindowInsetsCompat.CONSUMED
+        }
+
+        val root = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL }
+        root.addView(scroll, LinearLayout.LayoutParams(match, 0, 1f))
+        root.addView(navWrap, LinearLayout.LayoutParams(match, wrap))
+        ViewCompat.setOnApplyWindowInsetsListener(root) { v, ins ->
             val b = ins.getInsets(WindowInsetsCompat.Type.systemBars())
-            v.setPadding(b.left, b.top, b.right, b.bottom)
+            v.setPadding(b.left, b.top, b.right, 0)
             ins
         }
-        setContentView(scroll)
+        setContentView(root)
+
+        nav.selectedItemId = tab
+        showTab(tab)
 
         try { Shizuku.addRequestPermissionResultListener(permListener) } catch (e: Throwable) {}
-        refresh()
+        refreshAll()
+    }
+
+    override fun onSaveInstanceState(outState: Bundle) {
+        super.onSaveInstanceState(outState)
+        outState.putInt("tab", tab)
     }
 
     override fun onResume() {
@@ -330,6 +302,50 @@ class MainActivity : AppCompatActivity() {
     override fun onDestroy() {
         try { Shizuku.removeRequestPermissionResultListener(permListener) } catch (e: Throwable) {}
         super.onDestroy()
+    }
+
+    private fun showTab(id: Int) {
+        tab = id
+        kb.pane.visibility = if (id == 1) View.VISIBLE else View.GONE
+        fl.pane.visibility = if (id == 2) View.VISIBLE else View.GONE
+    }
+
+    private fun buildSetupCard(): MaterialCardView {
+        val (c, box) = card()
+        box.addView(TextView(this).apply {
+            text = t(
+                "1) Enable the accessibility service.\n2) Key and mouse actions need Shizuku running and granted.\n3) Set up a macro and Save.\n4) Open the target app, then press the hotkey or tap a floating button.",
+                "1) Aktifkan layanan aksesibilitas.\n2) Aksi tombol dan mouse membutuhkan Shizuku yang berjalan dan diizinkan.\n3) Atur macro lalu Simpan.\n4) Buka aplikasi target, lalu tekan hotkey atau ketuk tombol melayang."
+            )
+        })
+        box.addView(btn(t("Open accessibility settings", "Buka pengaturan aksesibilitas"), true) {
+            startActivity(Intent(Settings.ACTION_ACCESSIBILITY_SETTINGS))
+        })
+        statusText = TextView(this).apply { setPadding(0, dp(12), 0, 0) }
+        box.addView(statusText)
+        box.addView(btn(t("Grant Shizuku access", "Beri akses Shizuku"), true) { requestShizuku() })
+
+        onlySw = MaterialSwitch(this).apply {
+            text = t("Only active in the target app", "Hanya aktif di aplikasi target")
+            layoutParams = lp(12)
+            setOnCheckedChangeListener { _, checked -> if (!loading) cfg.onlyTarget = checked }
+        }
+        box.addView(onlySw)
+
+        val (til, pk) = field(t("Target app package", "Paket aplikasi target")) { cfg.targetPackage = it.trim() }
+        pkgEt = pk
+        box.addView(til)
+        return c
+    }
+
+    private fun refreshAll() {
+        loading = true
+        onlySw.isChecked = cfg.onlyTarget
+        pkgEt.setText(cfg.targetPackage)
+        loading = false
+        kb.refresh()
+        fl.refresh()
+        refreshStatus()
     }
 
     private fun showSettings() {
@@ -393,27 +409,6 @@ class MainActivity : AppCompatActivity() {
         }
     }
 
-    private fun refresh() {
-        loading = true
-        onlySw.isChecked = cfg.onlyTarget
-        pkgEt.setText(cfg.targetPackage)
-        val names = cfg.macros.mapIndexed { i, m -> "${i + 1}. ${m.name}" }
-        macroAc.setSimpleItems(names.toTypedArray())
-        macroAc.setText(names[cur], false)
-        nameEt.setText(macro.name)
-        toggleSw.isChecked = macro.toggle
-        togetherSw.isChecked = macro.together
-        repeatEt.setText(macro.repeat.toString())
-        loading = false
-        refreshHotkey()
-        rebuildActions()
-    }
-
-    private fun refreshHotkey() {
-        hotkeyBtn.text = if (macro.trigger.isBlank()) t("Hotkey: not set (tap to set)", "Hotkey: belum diatur (ketuk untuk atur)")
-        else t("Hotkey: ${macro.trigger} (tap to change)", "Hotkey: ${macro.trigger} (ketuk untuk ganti)")
-    }
-
     private fun capture(
         title: String,
         msg: String,
@@ -461,110 +456,333 @@ class MainActivity : AppCompatActivity() {
         dlg.show()
     }
 
-    private fun rebuildActions() {
-        actionsBox.removeAllViews()
-        macro.actions.forEachIndexed { i, a -> actionsBox.addView(actionCard(i, a)) }
-        addBtn.isEnabled = macro.actions.size < 10
-        addBtn.text = t("+ Add action (${macro.actions.size}/10)", "+ Tambah aksi (${macro.actions.size}/10)")
-    }
-
-    private fun actionCard(i: Int, a: MacroAction): MaterialCardView {
-        val (card, box) = card()
-
-        val label = TextView(this).apply { setPadding(0, dp(8), 0, 0) }
-        val keyBtn = MaterialButton(this, null, MR.attr.materialButtonOutlinedStyle)
-        keyBtn.layoutParams = lp(8)
-        val coords = row()
-
-        fun coord(hint: String, v: Float, set: (Float) -> Unit): TextInputLayout {
-            val (til, et) = field(hint, true) { set(it.toFloatOrNull() ?: 0f) }
-            et.setText(v.toInt().toString())
-            coords.addView(til, w(2))
-            return til
-        }
-        coord("X", a.x) { a.x = it }
-        coord("Y", a.y) { a.y = it }
-        val x2 = coord("X2", a.x2) { a.x2 = it }
-        val y2 = coord("Y2", a.y2) { a.y2 = it }
-
-        fun applyType() {
-            val isKey = a.type == "key"
-            val isSwipe = a.type == "swipe"
-            keyBtn.visibility = if (isKey) View.VISIBLE else View.GONE
-            coords.visibility = if (isKey || a.type == "delay") View.GONE else View.VISIBLE
-            x2.visibility = if (isSwipe) View.VISIBLE else View.GONE
-            y2.visibility = if (isSwipe) View.VISIBLE else View.GONE
-            keyBtn.text = t(
-                "Key: ${MacroStore.keyName(a.key)} (tap to change)",
-                "Tombol: ${MacroStore.keyName(a.key)} (ketuk untuk ganti)"
-            )
-            label.text = when (a.type) {
-                "tap" -> t("Delay after tap", "Jeda setelah tap")
-                "long_press" -> t("Hold duration", "Lama tahan")
-                "swipe" -> t("Swipe duration", "Durasi swipe")
-                "key" -> t("Hold duration", "Lama tahan")
-                else -> t("Delay", "Jeda")
-            } + ": ${a.ms} ms"
-        }
-
-        keyBtn.setOnClickListener {
-            capture(
-                t("Press a key or click a mouse button", "Tekan tombol atau klik tombol mouse"),
-                t("Press a key on the keyboard, or click a mouse button (left, right, middle) inside this dialog.",
-                    "Tekan tombol di keyboard, atau klik tombol mouse (kiri, kanan, tengah) di dalam dialog ini."),
-                { a.key = it.keyCode; applyType() },
-                { a.key = it; applyType() }
-            )
-        }
-
-        val head = row()
-        val (typeTil, typeAc) = dropdown("#${i + 1}")
-        val labels = typeLabels()
-        typeAc.setSimpleItems(labels.toTypedArray())
-        typeAc.setText(labels[types.indexOf(a.type).coerceAtLeast(0)], false)
-        typeAc.setOnItemClickListener { _, _, pos, _ ->
-            a.type = types[pos]
-            if (a.type == "key" && a.key == 0) a.key = KeyEvent.KEYCODE_C
-            applyType()
-        }
-        head.addView(typeTil, w(0))
-        head.addView(btn("✕", true) {
-            macro.actions.removeAt(i)
-            rebuildActions()
-        }, LinearLayout.LayoutParams(wrap, wrap).apply { marginStart = dp(8) })
-
-        val slider = Slider(this).apply {
-            valueFrom = 10f
-            valueTo = 2000f
-            stepSize = 10f
-            value = (a.ms.toInt().coerceIn(10, 2000) / 10 * 10).toFloat()
-            addOnChangeListener { _, v, _ ->
-                a.ms = v.toLong()
-                applyType()
-            }
-        }
-
-        box.addView(head)
-        box.addView(keyBtn)
-        box.addView(coords)
-        box.addView(label)
-        box.addView(slider)
-        applyType()
-        return card
-    }
-
     private fun save() {
         if (cfg.targetPackage.isBlank()) cfg.targetPackage = MacroStore.MC_PACKAGE
         val trig = cfg.macros.map { it.trigger.uppercase() }
         when {
             cfg.macros.any { it.trigger.isBlank() } ->
-                toast(t("A macro has no hotkey", "Ada macro yang belum punya hotkey"))
+                toast(t("A keyboard macro has no hotkey", "Ada macro keyboard yang belum punya hotkey"))
             trig.toSet().size != trig.size ->
                 toast(t("Two macros share the same hotkey", "Ada hotkey yang sama antar macro"))
             else -> {
                 MacroStore.save(this, MacroStore.toJson(cfg))
                 toast(t("Saved", "Tersimpan"))
             }
+        }
+    }
+
+    private inner class Editor(val floating: Boolean) {
+        var cur = 0
+        val pane = LinearLayout(this@MainActivity).apply { orientation = LinearLayout.VERTICAL }
+        private val limit = 5
+
+        private lateinit var floatSw: MaterialSwitch
+        private lateinit var macroAc: MaterialAutoCompleteTextView
+        private lateinit var nameEt: TextInputEditText
+        private lateinit var labelEt: TextInputEditText
+        private lateinit var hotkeyBtn: MaterialButton
+        private lateinit var toggleSw: MaterialSwitch
+        private lateinit var togetherSw: MaterialSwitch
+        private lateinit var repeatEt: TextInputEditText
+        private lateinit var actionsBox: LinearLayout
+        private lateinit var addBtn: MaterialButton
+        private lateinit var appearanceBox: LinearLayout
+        private lateinit var previewBox: FrameLayout
+
+        private val list: MutableList<Macro> get() = if (floating) cfg.floats else cfg.macros
+        val macro: Macro get() = list[cur]
+
+        init { build() }
+
+        private fun build() {
+            val ctx = this@MainActivity
+
+            if (floating) {
+                floatSw = MaterialSwitch(ctx).apply {
+                    text = t("Show floating buttons", "Tampilkan tombol melayang")
+                    layoutParams = lp(12)
+                    setOnCheckedChangeListener { _, checked -> if (!loading) cfg.floatEnabled = checked }
+                }
+                pane.addView(floatSw)
+                pane.addView(TextView(ctx).apply {
+                    text = t(
+                        "Tap a button to run its macro, drag it to move it. Buttons update after you Save.",
+                        "Ketuk tombol untuk menjalankan macro, seret untuk memindahkan. Tombol diperbarui setelah Simpan."
+                    )
+                    setPadding(dp(4), dp(4), dp(4), 0)
+                })
+            }
+
+            val (macroTil, ac) = dropdown(if (floating) t("Button", "Tombol") else "Macro")
+            macroAc = ac
+            macroAc.setOnItemClickListener { _, _, pos, _ ->
+                if (pos != cur) {
+                    cur = pos
+                    refresh()
+                }
+            }
+            val macroRow = row()
+            macroRow.layoutParams = lp(16)
+            macroRow.addView(macroTil, w(0))
+            macroRow.addView(btn("+", true) {
+                if (list.size >= limit) {
+                    toast(t("Maximum $limit", "Maksimal $limit"))
+                } else {
+                    list.add(if (floating) newFloat() else newMacro())
+                    cur = list.size - 1
+                    refresh()
+                }
+            }, LinearLayout.LayoutParams(wrap, wrap).apply { marginStart = dp(8) })
+            macroRow.addView(btn(t("Delete", "Hapus"), true) {
+                if (list.size <= 1) {
+                    toast(t("At least 1 is required", "Minimal 1"))
+                } else {
+                    list.removeAt(cur)
+                    cur = minOf(cur, list.size - 1)
+                    refresh()
+                }
+            }, LinearLayout.LayoutParams(wrap, wrap).apply { marginStart = dp(8) })
+            pane.addView(macroRow)
+
+            val (nameTil, name) = field(if (floating) t("Button name", "Nama tombol") else t("Macro name", "Nama macro")) {
+                macro.name = it
+            }
+            nameEt = name
+            pane.addView(nameTil)
+
+            if (floating) {
+                val (labelTil, lb) = field(t("Label (shown on the button)", "Label (tampil di tombol)")) {
+                    macro.label = it
+                    updatePreview()
+                }
+                labelEt = lb
+                pane.addView(labelTil)
+
+                previewBox = FrameLayout(ctx).apply {
+                    background = GradientDrawable().apply {
+                        setColor(MaterialColors.getColor(ctx, MR.attr.colorSurfaceContainerHigh, 0))
+                        cornerRadius = dp(16).toFloat()
+                    }
+                }
+                pane.addView(previewBox, LinearLayout.LayoutParams(match, dp(176)).apply { topMargin = dp(8) })
+                appearanceBox = LinearLayout(ctx).apply { orientation = LinearLayout.VERTICAL }
+                pane.addView(appearanceBox)
+            } else {
+                hotkeyBtn = btn("") {
+                    capture(
+                        t("Press the hotkey", "Tekan hotkey"),
+                        t("Press a key on the keyboard, optionally with Ctrl/Alt/Shift, e.g. F6 or Ctrl+F7.",
+                            "Tekan tombol di keyboard, boleh dengan Ctrl/Alt/Shift, mis. F6 atau Ctrl+F7."),
+                        {
+                            macro.trigger = MacroStore.combo(it)
+                            refreshHotkey()
+                        }
+                    )
+                }
+                pane.addView(hotkeyBtn)
+            }
+
+            toggleSw = MaterialSwitch(ctx).apply {
+                text = if (floating) t("Toggle (tap to start, tap again to stop)", "Toggle (ketuk untuk mulai, ketuk lagi untuk berhenti)")
+                else t("Toggle (press to start, press again to stop)", "Toggle (tekan untuk mulai, tekan lagi untuk berhenti)")
+                layoutParams = lp(8)
+                setOnCheckedChangeListener { _, checked -> if (!loading) macro.toggle = checked }
+            }
+            pane.addView(toggleSw)
+
+            togetherSw = MaterialSwitch(ctx).apply {
+                text = t("Press key actions together", "Tekan aksi tombol bersamaan")
+                layoutParams = lp(4)
+                setOnCheckedChangeListener { _, checked -> if (!loading) macro.together = checked }
+            }
+            pane.addView(togetherSw)
+
+            val (repeatTil, rep) = field(
+                t("Repeat (0 = endless, toggle only)", "Ulangi (0 = tanpa henti, hanya toggle)"), true
+            ) { macro.repeat = it.toIntOrNull() ?: 1 }
+            repeatEt = rep
+            pane.addView(repeatTil)
+
+            pane.addView(TextView(ctx).apply {
+                text = t("Actions (max 10). Slider left = faster.", "Aksi (maks 10). Slider ke kiri = lebih cepat.")
+                setTextAppearance(MR.style.TextAppearance_Material3_TitleMedium)
+                setPadding(0, dp(20), 0, 0)
+            })
+            actionsBox = LinearLayout(ctx).apply { orientation = LinearLayout.VERTICAL }
+            pane.addView(actionsBox)
+
+            addBtn = btn("") {
+                if (macro.actions.size < 10) {
+                    macro.actions.add(newAction())
+                    rebuildActions()
+                }
+            }
+            pane.addView(addBtn)
+        }
+
+        fun refresh() {
+            cur = cur.coerceIn(0, list.size - 1)
+            loading = true
+            if (floating) floatSw.isChecked = cfg.floatEnabled
+            val names = list.mapIndexed { i, m -> "${i + 1}. ${m.name}" }
+            macroAc.setSimpleItems(names.toTypedArray())
+            macroAc.setText(names[cur], false)
+            nameEt.setText(macro.name)
+            if (floating) labelEt.setText(macro.label)
+            toggleSw.isChecked = macro.toggle
+            togetherSw.isChecked = macro.together
+            repeatEt.setText(macro.repeat.toString())
+            loading = false
+            if (floating) {
+                buildAppearance()
+                updatePreview()
+            } else {
+                refreshHotkey()
+            }
+            rebuildActions()
+        }
+
+        private fun refreshHotkey() {
+            hotkeyBtn.text = if (macro.trigger.isBlank()) t("Hotkey: not set (tap to set)", "Hotkey: belum diatur (ketuk untuk atur)")
+            else t("Hotkey: ${macro.trigger} (tap to change)", "Hotkey: ${macro.trigger} (ketuk untuk ganti)")
+        }
+
+        private fun buildAppearance() {
+            appearanceBox.removeAllViews()
+            appearanceBox.addView(sliderRow(t("Size", "Ukuran"), "dp", 32, 160, 4, macro.size) {
+                macro.size = it
+                updatePreview()
+            })
+            appearanceBox.addView(sliderRow(t("Opacity", "Opasitas"), "%", 20, 100, 5, macro.opacity) {
+                macro.opacity = it
+                updatePreview()
+            })
+            appearanceBox.addView(sliderRow(t("Roundness", "Kebulatan"), "%", 0, 100, 5, macro.radius) {
+                macro.radius = it
+                updatePreview()
+            })
+        }
+
+        private fun updatePreview() {
+            previewBox.removeAllViews()
+            val size = FloatUi.px(this@MainActivity, macro.size)
+            previewBox.addView(
+                FloatUi.create(this@MainActivity, macro),
+                FrameLayout.LayoutParams(size, size, Gravity.CENTER)
+            )
+        }
+
+        private fun rebuildActions() {
+            actionsBox.removeAllViews()
+            macro.actions.forEachIndexed { i, a -> actionsBox.addView(actionCard(i, a)) }
+            addBtn.isEnabled = macro.actions.size < 10
+            addBtn.text = t("+ Add action (${macro.actions.size}/10)", "+ Tambah aksi (${macro.actions.size}/10)")
+        }
+
+        private fun actionCard(i: Int, a: MacroAction): MaterialCardView {
+            val ctx = this@MainActivity
+            val (card, box) = card()
+
+            val label = TextView(ctx).apply { setPadding(0, dp(8), 0, 0) }
+            val keyBtn = MaterialButton(ctx, null, MR.attr.materialButtonOutlinedStyle)
+            keyBtn.layoutParams = lp(8)
+            val (keyTil, keyAc) = dropdown(t("Key / mouse button", "Tombol / tombol mouse"))
+            keyAc.setSimpleItems(KeyList.names.toTypedArray())
+            keyTil.layoutParams = lp(8)
+            val coords = row()
+
+            fun coord(hint: String, v: Float, set: (Float) -> Unit): TextInputLayout {
+                val (til, et) = field(hint, true) { set(it.toFloatOrNull() ?: 0f) }
+                et.setText(v.toInt().toString())
+                coords.addView(til, w(2))
+                return til
+            }
+            coord("X", a.x) { a.x = it }
+            coord("Y", a.y) { a.y = it }
+            val x2 = coord("X2", a.x2) { a.x2 = it }
+            val y2 = coord("Y2", a.y2) { a.y2 = it }
+
+            fun updLabel() {
+                label.text = when (a.type) {
+                    "tap" -> t("Delay after tap", "Jeda setelah tap")
+                    "long_press" -> t("Hold duration", "Lama tahan")
+                    "swipe" -> t("Swipe duration", "Durasi swipe")
+                    "key" -> t("Hold duration", "Lama tahan")
+                    else -> t("Delay", "Jeda")
+                } + ": ${a.ms} ms"
+            }
+
+            fun applyType() {
+                val isKey = a.type == "key"
+                val isSwipe = a.type == "swipe"
+                keyBtn.visibility = if (isKey && !floating) View.VISIBLE else View.GONE
+                keyTil.visibility = if (isKey && floating) View.VISIBLE else View.GONE
+                coords.visibility = if (isKey || a.type == "delay") View.GONE else View.VISIBLE
+                x2.visibility = if (isSwipe) View.VISIBLE else View.GONE
+                y2.visibility = if (isSwipe) View.VISIBLE else View.GONE
+                keyBtn.text = t(
+                    "Key: ${MacroStore.keyName(a.key)} (tap to change)",
+                    "Tombol: ${MacroStore.keyName(a.key)} (ketuk untuk ganti)"
+                )
+                keyAc.setText(KeyList.displayName(a.key), false)
+                updLabel()
+            }
+
+            keyBtn.setOnClickListener {
+                capture(
+                    t("Press a key or click a mouse button", "Tekan tombol atau klik tombol mouse"),
+                    t("Press a key on the keyboard, or click a mouse button (left, right, middle) inside this dialog.",
+                        "Tekan tombol di keyboard, atau klik tombol mouse (kiri, kanan, tengah) di dalam dialog ini."),
+                    {
+                        a.key = it.keyCode
+                        applyType()
+                    },
+                    {
+                        a.key = it
+                        applyType()
+                    }
+                )
+            }
+            keyAc.setOnItemClickListener { _, _, pos, _ ->
+                a.key = KeyList.codes[pos]
+                applyType()
+            }
+
+            val head = row()
+            val (typeTil, typeAc) = dropdown("#${i + 1}")
+            val labels = typeLabels()
+            typeAc.setSimpleItems(labels.toTypedArray())
+            typeAc.setText(labels[types.indexOf(a.type).coerceAtLeast(0)], false)
+            typeAc.setOnItemClickListener { _, _, pos, _ ->
+                a.type = types[pos]
+                if (a.type == "key" && a.key == 0) a.key = KeyEvent.KEYCODE_C
+                applyType()
+            }
+            head.addView(typeTil, w(0))
+            head.addView(btn("✕", true) {
+                macro.actions.removeAt(i)
+                rebuildActions()
+            }, LinearLayout.LayoutParams(wrap, wrap).apply { marginStart = dp(8) })
+
+            val slider = Slider(ctx).apply {
+                valueFrom = 10f
+                valueTo = 2000f
+                stepSize = 10f
+                value = (a.ms.toInt().coerceIn(10, 2000) / 10 * 10).toFloat()
+                addOnChangeListener { _, v, _ ->
+                    a.ms = v.toLong()
+                    updLabel()
+                }
+            }
+
+            box.addView(head)
+            box.addView(keyBtn)
+            box.addView(keyTil)
+            box.addView(coords)
+            box.addView(label)
+            box.addView(slider)
+            applyType()
+            return card
         }
     }
 
