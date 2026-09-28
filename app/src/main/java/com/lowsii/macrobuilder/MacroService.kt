@@ -5,7 +5,15 @@ import android.accessibilityservice.GestureDescription
 import android.graphics.Path
 import android.view.KeyEvent
 import android.view.accessibility.AccessibilityEvent
-import kotlinx.coroutines.*
+import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.Job
+import kotlinx.coroutines.SupervisorJob
+import kotlinx.coroutines.cancel
+import kotlinx.coroutines.delay
+import kotlinx.coroutines.isActive
+import kotlinx.coroutines.launch
+import kotlinx.coroutines.suspendCancellableCoroutine
 import kotlin.coroutines.resume
 
 class MacroService : AccessibilityService() {
@@ -23,24 +31,14 @@ class MacroService : AccessibilityService() {
     override fun onInterrupt() {}
 
     override fun onKeyEvent(ev: KeyEvent): Boolean {
+        if (KeyInjector.held.contains(ev.keyCode)) return false
         val cfg = MacroStore.load(this)
         if (cfg.onlyMinecraft && foreground != MacroStore.MC_PACKAGE) return false
-
-        val combo = combo(ev)
+        val combo = MacroStore.combo(ev)
         val macro = cfg.macros.firstOrNull { it.trigger.equals(combo, ignoreCase = true) }
             ?: return false
-
         if (ev.action == KeyEvent.ACTION_DOWN && ev.repeatCount == 0) start(macro)
-        return true // tombol hotkey tidak diteruskan ke game
-    }
-
-    private fun combo(ev: KeyEvent): String {
-        val parts = mutableListOf<String>()
-        if (ev.isCtrlPressed) parts += "CTRL"
-        if (ev.isAltPressed) parts += "ALT"
-        if (ev.isShiftPressed) parts += "SHIFT"
-        parts += KeyEvent.keyCodeToString(ev.keyCode).removePrefix("KEYCODE_")
-        return parts.joinToString("+")
+        return true
     }
 
     private fun start(m: Macro) {
@@ -54,9 +52,45 @@ class MacroService : AccessibilityService() {
             val infinite = m.toggle && m.repeat == 0
             val total = maxOf(1, m.repeat)
             while (isActive && (infinite || i < total)) {
-                for (a in m.actions) { if (!isActive) break; exec(a) }
+                runActions(m)
                 i++
-                delay(1) // cegah loop tanpa jeda
+                delay(1)
+            }
+        }
+    }
+
+    private suspend fun runActions(m: Macro) {
+        val list = m.actions.toList()
+        var i = 0
+        while (i < list.size) {
+            if (list[i].type == "key") {
+                var j = i
+                while (j < list.size && list[j].type == "key") j++
+                pressKeys(list.subList(i, j), m.together)
+                i = j
+            } else {
+                exec(list[i])
+                i++
+            }
+        }
+    }
+
+    private suspend fun pressKeys(group: List<MacroAction>, together: Boolean) {
+        if (together) {
+            try {
+                group.forEach { KeyInjector.send(it.key, true) }
+                delay(group.maxOf { it.ms })
+            } finally {
+                group.forEach { KeyInjector.send(it.key, false) }
+            }
+        } else {
+            for (k in group) {
+                try {
+                    KeyInjector.send(k.key, true)
+                    delay(k.ms)
+                } finally {
+                    KeyInjector.send(k.key, false)
+                }
             }
         }
     }
@@ -64,7 +98,10 @@ class MacroService : AccessibilityService() {
     private suspend fun exec(a: MacroAction) {
         when (a.type) {
             "delay" -> delay(a.ms)
-            "tap" -> { gesture(Path().apply { moveTo(a.x, a.y) }, 50); delay(a.ms) }
+            "tap" -> {
+                gesture(Path().apply { moveTo(a.x, a.y) }, 50)
+                delay(a.ms)
+            }
             "long_press" -> gesture(Path().apply { moveTo(a.x, a.y) }, a.ms)
             "swipe" -> gesture(Path().apply { moveTo(a.x, a.y); lineTo(a.x2, a.y2) }, a.ms)
         }
