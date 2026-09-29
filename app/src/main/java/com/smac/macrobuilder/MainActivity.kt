@@ -4,7 +4,10 @@ import android.content.ClipData
 import android.content.ClipboardManager
 import android.content.Intent
 import android.graphics.drawable.GradientDrawable
+import android.net.Uri
 import android.os.Bundle
+import androidx.activity.result.ActivityResultLauncher
+import androidx.activity.result.contract.ActivityResultContracts
 import android.os.Handler
 import android.os.Looper
 import android.provider.Settings
@@ -45,6 +48,9 @@ class MainActivity : AppCompatActivity() {
     private var lang = "en"
     private var tab = 1
     private var lastStored = ""
+    private var pendingBgMacro: Macro? = null
+    private var pendingBgUpdate: (() -> Unit)? = null
+    private lateinit var pickImage: ActivityResultLauncher<String>
 
     private lateinit var kb: Editor
     private lateinit var fl: Editor
@@ -183,6 +189,25 @@ class MainActivity : AppCompatActivity() {
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
+        pickImage = registerForActivityResult(ActivityResultContracts.GetContent()) { uri: Uri? ->
+            val m = pendingBgMacro
+            if (uri != null && m != null) {
+                try {
+                    contentResolver.takePersistableUriPermission(
+                        uri, Intent.FLAG_GRANT_READ_URI_PERMISSION
+                    )
+                } catch (e: Exception) {
+                }
+                if (FloatUi.saveBackground(this, m, uri)) {
+                    m.bgImage = true
+                    pendingBgUpdate?.invoke()
+                } else {
+                    toast(t("Could not load that image", "Gagal memuat gambar itu"))
+                }
+            }
+            pendingBgMacro = null
+            pendingBgUpdate = null
+        }
         lang = getSharedPreferences("settings", MODE_PRIVATE).getString("lang", "en") ?: "en"
         cfg = draft ?: try {
             MacroStore.parse(MacroStore.raw(this))
@@ -748,6 +773,44 @@ class MainActivity : AppCompatActivity() {
                 macro.radius = it
                 updatePreview()
             })
+            appearanceBox.addView(TextView(ctx).apply {
+                text = t("Background", "Latar belakang")
+                setPadding(0, dp(8), 0, dp(4))
+            })
+            val swatches = LinearLayout(ctx).apply {
+                orientation = LinearLayout.HORIZONTAL
+                layoutParams = lp(4)
+            }
+            FloatUi.PALETTE.forEach { c ->
+                val fill = if (c == 0) FloatUi.accent(ctx) else c
+                val sw = View(ctx).apply {
+                    background = GradientDrawable().apply {
+                        shape = GradientDrawable.OVAL
+                        setColor(fill)
+                        setStroke(dp(2), 0x55FFFFFF)
+                    }
+                    setOnClickListener {
+                        macro.bgColor = c
+                        macro.bgImage = false
+                        updatePreview()
+                    }
+                }
+                swatches.addView(sw, LinearLayout.LayoutParams(dp(28), dp(28)).apply {
+                    marginEnd = dp(8)
+                })
+            }
+            appearanceBox.addView(swatches)
+            val imgRow = row()
+            imgRow.addView(btn(t("Choose image", "Pilih gambar"), true) {
+                pendingBgMacro = macro
+                pendingBgUpdate = { updatePreview() }
+                pickImage.launch("image/*")
+            }, w())
+            imgRow.addView(btn(t("Remove image", "Hapus gambar"), true) {
+                macro.bgImage = false
+                updatePreview()
+            }, w())
+            appearanceBox.addView(imgRow)
         }
 
         private fun buildTouch() {
