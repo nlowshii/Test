@@ -117,6 +117,36 @@ class MacroService : AccessibilityService() {
         Diag.lastKey = "touch: ${m.name}"
         Diag.arg = m.name
         Diag.result = "started"
+        if (KeyInjector.ready()) {
+            scope.launch { touchViaShizuku(m, x, y) }
+        } else {
+            touchViaGesture(m, x, y)
+        }
+    }
+
+    private suspend fun touchViaShizuku(m: Macro, x: Float, y: Float) {
+        if (m.hold) {
+            val down = KeyInjector.touchDown(x, y)
+            if (down != null) {
+                delay(m.holdMs.toLong().coerceAtLeast(1))
+                KeyInjector.touchUp(x, y, down)
+            } else {
+                touchViaGesture(m, x, y)
+            }
+        } else {
+            val n = m.taps.coerceIn(1, 10)
+            val step = m.interval.toLong().coerceAtLeast(40)
+            for (i in 0 until n) {
+                if (!KeyInjector.touchTap(x, y)) {
+                    touchViaGesture(m, x, y)
+                    return
+                }
+                if (i < n - 1) delay(step)
+            }
+        }
+    }
+
+    private fun touchViaGesture(m: Macro, x: Float, y: Float) {
         val builder = GestureDescription.Builder()
         if (m.hold) {
             val path = Path().apply { moveTo(x, y) }
