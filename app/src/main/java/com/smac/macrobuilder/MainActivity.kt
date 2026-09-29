@@ -355,8 +355,8 @@ class MainActivity : AppCompatActivity() {
         val (c, box) = card()
         box.addView(TextView(this).apply {
             text = t(
-                "1) Enable the accessibility service.\n2) Touch buttons only need the accessibility service. Key and mouse actions also need Shizuku.\n3) Set up a macro and Save.\n4) Open the target app: press a hotkey, or use the mod menu to add floating touch buttons.",
-                "1) Aktifkan layanan aksesibilitas.\n2) Tombol sentuh hanya butuh layanan aksesibilitas. Aksi tombol dan mouse juga butuh Shizuku.\n3) Atur macro lalu Simpan.\n4) Buka aplikasi target: tekan hotkey, atau pakai mod menu untuk menambah tombol sentuh melayang."
+                "1) Enable the accessibility service.\n2) Grant Shizuku access too — touch buttons use it to avoid interrupting the game's own touch controls (without it they still work, but can pause other touches).\n3) Set up a macro and Save.\n4) Open the target app: press a hotkey, or use the mod menu to add floating touch buttons.",
+                "1) Aktifkan layanan aksesibilitas.\n2) Beri akses Shizuku juga — tombol sentuh memakainya agar tidak mengganggu kontrol sentuh game (tanpa itu tetap jalan, tapi bisa menjeda sentuhan lain).\n3) Atur macro lalu Simpan.\n4) Buka aplikasi target: tekan hotkey, atau pakai mod menu untuk menambah tombol sentuh melayang."
             )
         })
         box.addView(btn(t("Open accessibility settings", "Buka pengaturan aksesibilitas"), true) {
