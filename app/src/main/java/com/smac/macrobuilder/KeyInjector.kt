@@ -107,6 +107,57 @@ object KeyInjector {
         }
     }
 
+    fun touchTap(x: Float, y: Float): Boolean {
+        if (!ready() || !bind()) {
+            Diag.lastInject = "unavailable"
+            return false
+        }
+        val down = SystemClock.uptimeMillis()
+        val ok1 = touchEvent(MotionEvent.ACTION_DOWN, x, y, down, down)
+        val ok2 = touchEvent(MotionEvent.ACTION_UP, x, y, down, SystemClock.uptimeMillis())
+        val ok = ok1 && ok2
+        Diag.lastInject = if (ok) "ok" else "failed"
+        return ok
+    }
+
+    fun touchDown(x: Float, y: Float): Long? {
+        if (!ready() || !bind()) {
+            Diag.lastInject = "unavailable"
+            return null
+        }
+        val down = SystemClock.uptimeMillis()
+        val ok = touchEvent(MotionEvent.ACTION_DOWN, x, y, down, down)
+        Diag.lastInject = if (ok) "ok" else "failed"
+        return if (ok) down else null
+    }
+
+    fun touchUp(x: Float, y: Float, downTime: Long): Boolean {
+        if (!ready() || !bind()) return false
+        val ok = touchEvent(MotionEvent.ACTION_UP, x, y, downTime, SystemClock.uptimeMillis())
+        Diag.lastInject = if (ok) "ok" else "failed"
+        return ok
+    }
+
+    private fun touchEvent(action: Int, x: Float, y: Float, downTime: Long, eventTime: Long): Boolean {
+        val props = arrayOf(MotionEvent.PointerProperties().apply {
+            id = 0
+            toolType = MotionEvent.TOOL_TYPE_FINGER
+        })
+        val coords = arrayOf(MotionEvent.PointerCoords().apply {
+            this.x = x
+            this.y = y
+            pressure = 1f
+            size = 1f
+        })
+        val ev = MotionEvent.obtain(
+            downTime, eventTime, action, 1, props, coords, 0, 0, 1f, 1f, 0, 0,
+            InputDevice.SOURCE_TOUCHSCREEN, 0
+        )
+        val ok = inject(ev)
+        ev.recycle()
+        return ok
+    }
+
     private fun mouse(action: Int, actionButton: Int, state: Int): Boolean {
         val now = SystemClock.uptimeMillis()
         val dm = Resources.getSystem().displayMetrics
