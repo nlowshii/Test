@@ -773,17 +773,17 @@ class MainActivity : AppCompatActivity() {
                 macro.radius = it
                 updatePreview()
             })
-            appearanceBox.addView(TextView(ctx).apply {
+            appearanceBox.addView(TextView(this@MainActivity).apply {
                 text = t("Background", "Latar belakang")
                 setPadding(0, dp(8), 0, dp(4))
             })
-            val swatches = LinearLayout(ctx).apply {
+            val swatches = LinearLayout(this@MainActivity).apply {
                 orientation = LinearLayout.HORIZONTAL
                 layoutParams = lp(4)
             }
             FloatUi.PALETTE.forEach { c ->
-                val fill = if (c == 0) FloatUi.accent(ctx) else c
-                val sw = View(ctx).apply {
+                val fill = if (c == 0) FloatUi.accent(this@MainActivity) else c
+                val sw = View(this@MainActivity).apply {
                     background = GradientDrawable().apply {
                         shape = GradientDrawable.OVAL
                         setColor(fill)
