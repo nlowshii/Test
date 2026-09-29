@@ -117,58 +117,40 @@ class MacroService : AccessibilityService() {
         Diag.lastKey = "touch: ${m.name}"
         Diag.arg = m.name
         Diag.result = "started"
-        if (KeyInjector.ready()) {
-            scope.launch { touchViaShizuku(m, x, y) }
-        } else {
-            touchViaGesture(m, x, y)
-        }
-    }
-
-    private suspend fun touchViaShizuku(m: Macro, x: Float, y: Float) {
-        if (m.hold) {
-            val down = KeyInjector.touchDown(x, y)
-            if (down != null) {
-                delay(m.holdMs.toLong().coerceAtLeast(1))
-                KeyInjector.touchUp(x, y, down)
+        scope.launch {
+            if (m.hold) {
+                if (!TouchInjector.hold(x, y, m.holdMs.toLong())) fallbackHold(x, y, m.holdMs.toLong())
             } else {
-                touchViaGesture(m, x, y)
-            }
-        } else {
-            val n = m.taps.coerceIn(1, 10)
-            val step = m.interval.toLong().coerceAtLeast(40)
-            for (i in 0 until n) {
-                if (!KeyInjector.touchTap(x, y)) {
-                    touchViaGesture(m, x, y)
-                    return
+                val n = m.taps.coerceIn(1, 10)
+                val step = m.interval.toLong().coerceAtLeast(40)
+                for (i in 0 until n) {
+                    if (!TouchInjector.tap(x, y)) {
+                        fallbackTap(x, y)
+                    }
+                    if (i < n - 1) delay(step)
                 }
-                if (i < n - 1) delay(step)
             }
         }
     }
 
-    private fun touchViaGesture(m: Macro, x: Float, y: Float) {
-        val builder = GestureDescription.Builder()
-        if (m.hold) {
-            val path = Path().apply { moveTo(x, y) }
-            builder.addStroke(
-                GestureDescription.StrokeDescription(path, 0, m.holdMs.toLong().coerceAtLeast(1))
-            )
-        } else {
-            val n = m.taps.coerceIn(1, 10)
-            val step = m.interval.toLong().coerceAtLeast(40)
-            for (i in 0 until n) {
-                val path = Path().apply { moveTo(x, y) }
-                builder.addStroke(GestureDescription.StrokeDescription(path, i * step, 30))
-            }
-        }
-        dispatchGesture(builder.build(), null, null)
+    private fun fallbackTap(x: Float, y: Float) {
+        val path = Path().apply { moveTo(x, y) }
+        dispatchGesture(
+            GestureDescription.Builder()
+                .addStroke(GestureDescription.StrokeDescription(path, 0, 40))
+                .build(),
+            null, null
+        )
     }
 
-    private fun findMacro(cfg: Config, ev: KeyEvent): Macro? {
-        val exact = MacroStore.combo(ev)
-        cfg.macros.firstOrNull { it.trigger.equals(exact, ignoreCase = true) }?.let { return it }
-        val base = MacroStore.keyName(ev.keyCode)
-        return cfg.macros.firstOrNull { it.trigger.equals(base, ignoreCase = true) }
+    private fun fallbackHold(x: Float, y: Float, ms: Long) {
+        val path = Path().apply { moveTo(x, y) }
+        dispatchGesture(
+            GestureDescription.Builder()
+                .addStroke(GestureDescription.StrokeDescription(path, 0, ms.coerceAtLeast(1)))
+                .build(),
+            null, null
+        )
     }
 
     override fun onKeyEvent(ev: KeyEvent): Boolean {
@@ -197,6 +179,13 @@ class MacroService : AccessibilityService() {
         }
         if (first) start(macro, "k:${macro.trigger}")
         return true
+    }
+
+    private fun findMacro(cfg: Config, ev: KeyEvent): Macro? {
+        val exact = MacroStore.combo(ev)
+        cfg.macros.firstOrNull { it.trigger.equals(exact, ignoreCase = true) }?.let { return it }
+        val base = MacroStore.keyName(ev.keyCode)
+        return cfg.macros.firstOrNull { it.trigger.equals(base, ignoreCase = true) }
     }
 
     private fun start(m: Macro, key: String) {
@@ -264,13 +253,20 @@ class MacroService : AccessibilityService() {
         when (a.type) {
             "delay" -> delay(a.ms)
             "tap" -> {
-                gesture(Path().apply { moveTo(a.x, a.y) }, 50)
+                if (!TouchInjector.tap(a.x, a.y)) fallbackTap(a.x, a.y)
                 delay(a.ms)
             }
-            "long_press" -> gesture(Path().apply { moveTo(a.x, a.y) }, a.ms)
-            "swipe" -> gesture(Path().apply { moveTo(a.x, a.y); lineTo(a.x2, a.y2) }, a.ms)
+            "long_press" -> {
+                if (!TouchInjector.hold(a.x, a.y, a.ms)) fallbackHold(a.x, a.y, a.ms)
+            }
+            "swipe" -> {
+                if (!TouchInjector.swipe(a.x, a.y, a.x2, a.y2, a.ms)) fallbackSwipe(a.x, a.y, a.x2, a.y2, a.ms)
+            }
         }
     }
+
+    private suspend fun fallbackSwipe(x1: Float, y1: Float, x2: Float, y2: Float, ms: Long) =
+        gesture(Path().apply { moveTo(x1, y1); lineTo(x2, y2) }, ms)
 
     private suspend fun gesture(path: Path, duration: Long) =
         suspendCancellableCoroutine<Unit> { c ->
