@@ -1,79 +1,18 @@
 package com.smac.macrobuilder
 
-import android.content.pm.PackageManager
-import android.content.res.Resources
-import android.os.IBinder
 import android.os.SystemClock
 import android.view.InputDevice
-import android.view.InputEvent
 import android.view.KeyCharacterMap
 import android.view.KeyEvent
 import android.view.MotionEvent
-import org.lsposed.hiddenapibypass.HiddenApiBypass
-import rikka.shizuku.Shizuku
-import rikka.shizuku.ShizukuBinderWrapper
-import rikka.shizuku.SystemServiceHelper
-import java.lang.reflect.Method
 
 object KeyInjector {
     val held = mutableSetOf<Int>()
 
-    private var manager: Any? = null
-    private var injectMethod: Method? = null
-
-    private val setActionButtonMethod: Method? by lazy {
-        try {
-            MotionEvent::class.java.getMethod("setActionButton", Int::class.javaPrimitiveType)
-        } catch (e: Throwable) {
-            null
-        }
-    }
-
-    private var readyAt = 0L
-    private var readyValue = false
-
-    fun ready(): Boolean {
-        val now = SystemClock.uptimeMillis()
-        if (now - readyAt < 1000) return readyValue
-        readyValue = try {
-            Shizuku.pingBinder() && Shizuku.checkSelfPermission() == PackageManager.PERMISSION_GRANTED
-        } catch (e: Throwable) {
-            false
-        }
-        readyAt = now
-        return readyValue
-    }
-
-    private fun bind(): Boolean {
-        if (manager != null && injectMethod != null) return true
-        return try {
-            HiddenApiBypass.addHiddenApiExemptions("")
-            val binder = ShizukuBinderWrapper(SystemServiceHelper.getSystemService("input"))
-            val stub = Class.forName("android.hardware.input.IInputManager\$Stub")
-            manager = stub.getMethod("asInterface", IBinder::class.java).invoke(null, binder)
-            injectMethod = Class.forName("android.hardware.input.IInputManager")
-                .getMethod("injectInputEvent", InputEvent::class.java, Int::class.javaPrimitiveType)
-            true
-        } catch (e: Throwable) {
-            manager = null
-            injectMethod = null
-            false
-        }
-    }
-
-    private fun inject(ev: InputEvent): Boolean = try {
-        injectMethod!!.invoke(manager, ev, 0) as? Boolean ?: false
-    } catch (e: Throwable) {
-        false
-    }
+    fun ready(): Boolean = ShizukuInput.ready()
 
     fun send(code: Int, down: Boolean): Boolean {
-        if (!ready() || !bind()) {
-            Diag.lastInject = "unavailable"
-            return false
-        }
         val ok = if (code < 0) sendMouse(code, down) else sendKey(code, down)
-        Diag.lastInject = if (ok) "ok" else "failed"
         return ok
     }
 
@@ -87,7 +26,7 @@ object KeyInjector {
             KeyCharacterMap.VIRTUAL_KEYBOARD, 0, 0,
             InputDevice.SOURCE_KEYBOARD
         )
-        return inject(event)
+        return ShizukuInput.inject(event)
     }
 
     private fun sendMouse(code: Int, down: Boolean): Boolean {
@@ -107,60 +46,9 @@ object KeyInjector {
         }
     }
 
-    fun touchTap(x: Float, y: Float): Boolean {
-        if (!ready() || !bind()) {
-            Diag.lastInject = "unavailable"
-            return false
-        }
-        val down = SystemClock.uptimeMillis()
-        val ok1 = touchEvent(MotionEvent.ACTION_DOWN, x, y, down, down)
-        val ok2 = touchEvent(MotionEvent.ACTION_UP, x, y, down, SystemClock.uptimeMillis())
-        val ok = ok1 && ok2
-        Diag.lastInject = if (ok) "ok" else "failed"
-        return ok
-    }
-
-    fun touchDown(x: Float, y: Float): Long? {
-        if (!ready() || !bind()) {
-            Diag.lastInject = "unavailable"
-            return null
-        }
-        val down = SystemClock.uptimeMillis()
-        val ok = touchEvent(MotionEvent.ACTION_DOWN, x, y, down, down)
-        Diag.lastInject = if (ok) "ok" else "failed"
-        return if (ok) down else null
-    }
-
-    fun touchUp(x: Float, y: Float, downTime: Long): Boolean {
-        if (!ready() || !bind()) return false
-        val ok = touchEvent(MotionEvent.ACTION_UP, x, y, downTime, SystemClock.uptimeMillis())
-        Diag.lastInject = if (ok) "ok" else "failed"
-        return ok
-    }
-
-    private fun touchEvent(action: Int, x: Float, y: Float, downTime: Long, eventTime: Long): Boolean {
-        val props = arrayOf(MotionEvent.PointerProperties().apply {
-            id = 0
-            toolType = MotionEvent.TOOL_TYPE_FINGER
-        })
-        val coords = arrayOf(MotionEvent.PointerCoords().apply {
-            this.x = x
-            this.y = y
-            pressure = 1f
-            size = 1f
-        })
-        val ev = MotionEvent.obtain(
-            downTime, eventTime, action, 1, props, coords, 0, 0, 1f, 1f, 0, 0,
-            InputDevice.SOURCE_TOUCHSCREEN, 0
-        )
-        val ok = inject(ev)
-        ev.recycle()
-        return ok
-    }
-
     private fun mouse(action: Int, actionButton: Int, state: Int): Boolean {
         val now = SystemClock.uptimeMillis()
-        val dm = Resources.getSystem().displayMetrics
+        val dm = android.content.res.Resources.getSystem().displayMetrics
         val props = arrayOf(MotionEvent.PointerProperties().apply {
             id = 0
             toolType = MotionEvent.TOOL_TYPE_MOUSE
@@ -181,8 +69,16 @@ object KeyInjector {
             } catch (e: Throwable) {
             }
         }
-        val ok = inject(ev)
+        val ok = ShizukuInput.inject(ev)
         ev.recycle()
         return ok
+    }
+
+    private val setActionButtonMethod by lazy {
+        try {
+            MotionEvent::class.java.getMethod("setActionButton", Int::class.javaPrimitiveType)
+        } catch (e: Throwable) {
+            null
+        }
     }
 }
